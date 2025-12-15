@@ -8,6 +8,7 @@ pushes **actionable performance insights** to external notification
 channels such as **WeCom (WeChat Work)**.
 
 The project is designed for production environments where:
+
 - PoWA is already deployed
 - Teams want **proactive awareness** instead of manual dashboard checks
 - Safety, stability, and low operational risk are critical

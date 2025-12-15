@@ -1,0 +1,50 @@
+database:
+  host: "${DB_HOST:-127.0.0.1}"
+  port: ${DB_PORT:-5432}
+  user: "${DB_USER:-powa_readonly}"
+  password: "${DB_PASSWORD}"
+  dbname: "${DB_NAME:-powa}"
+  sslmode: "${DB_SSLMODE:-disable}"
+
+schedule:
+  # Cron expression for analysis schedule
+  # Format: "second minute hour day-of-month month day-of-week"
+  # Default: Every Monday at 9:00 AM
+  cron: "${SCHEDULE_CRON:-0 0 9 * * 1}"
+
+analysis:
+  # Time window for current metrics analysis
+  window_duration: "${ANALYSIS_WINDOW:-24h}"
+  # Offset from current time to fetch baseline metrics for comparison
+  comparison_offset: "${ANALYSIS_OFFSET:-168h}"
+
+rules:
+  slow_sql:
+    # Number of top slow queries to include in alerts
+    top_n: ${RULES_SLOW_SQL_TOP_N:-10}
+    # Metric to rank by: "total_time", "mean_time", "cpu_time", "io_time"
+    rank_by: "${RULES_SLOW_SQL_RANK_BY:-total_time}"
+  regression:
+    # Minimum percentage increase in mean_time to trigger regression alert
+    threshold_percent: ${RULES_REGRESSION_THRESHOLD:-50}
+  index_suggestion:
+    # Minimum estimated improvement percentage to include in alerts
+    min_improvement_percent: ${RULES_INDEX_MIN_IMPROVEMENT:-30}
+
+notifier:
+  # Notification channel type: "wecom" or "console"
+  # - wecom: Send to WeCom (WeChat Work) webhook
+  # - console: Print to stdout (for testing/debugging)
+  type: "${NOTIFIER_TYPE:-console}"
+  # WeCom webhook URL (required if type is "wecom")
+  webhook_url: "${WECOM_WEBHOOK_URL}"
+  # Number of retry attempts for failed notifications
+  retries: ${NOTIFIER_RETRIES:-3}
+  # Initial retry delay (will use exponential backoff)
+  retry_delay: "${NOTIFIER_RETRY_DELAY:-1s}"
+
+server:
+  # HTTP server port for health checks
+  port: ${SERVER_PORT:-8080}
+  # Enable deep health check (includes DB connectivity test)
+  deep_check: ${SERVER_DEEP_CHECK:-true}
