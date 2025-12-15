@@ -18,6 +18,8 @@ The project is designed for production environments where:
 
 - 📊 Analyze PoWA aggregated query statistics
 - ⏱ Detect slow queries, regressions, and abnormal workload changes
+- 💡 **Proactive Index Suggestions** (via passive analysis of `pg_qualstats`)
+- 🖥 **Resource-based Alerts** (CPU/IO) if `pg_stat_kcache` is integrated
 - 📨 Push insights to WeCom (extensible to other channels)
 - 🔐 Read-only access to PoWA data
 - 🧩 Non-intrusive and decoupled from PoWA core
@@ -65,6 +67,9 @@ Notification Channels (WeCom, Webhook, Email…)
 
 - PostgreSQL with PoWA installed
 - Read-only database user with access to PoWA schemas
+- **Recommended Extensions** (on PoWA repository):
+    - `pg_stat_kcache`: For CPU/IO-based slow SQL detection.
+    - `pg_qualstats`: For missing index suggestions.
 - WeCom webhook or application credentials
 
 ---

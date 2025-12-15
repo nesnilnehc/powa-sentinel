@@ -21,9 +21,13 @@ The system must implement the following core functions:
 1.  **Data Acquisition**:
     *   Periodically fetch performance statistics from the PoWA database.
 2.  **Scenario Recognition**:
-    *   Identify **Slow SQL Top N** based on rules.
+    *   Identify **Slow SQL Top N** based on rules:
+        *   By Duration (Standard).
+        *   By CPU / IO (via `pg_stat_kcache`, if available).
     *   Identify **Abnormal growth in query duration/count**.
     *   Identify **Performance Regression**.
+    *   Identify **Optimization Opportunities** (New):
+        *   **Missing Index Suggestions** (via `pg_qualstats` + `hypopg`).
 3.  **Message Push**:
     *   Push analysis conclusions as messages to Enterprise WeChat (WeCom).
 4.  **Extensibility**:
@@ -55,9 +59,11 @@ To ensure the system can correctly identify "trends" and "anomalies", the target
 Push **"Conclusions"**, not "Raw Data". Message content should focus on: Metrics, Comparisons, Trends, Impact Assessment.
 
 ### 3.2 Information Grading
-*   **L1 (Management / Big Group)**: Summary conclusions, Impact assessment.
-*   **L2 (Tech Leads)**: SQL Hash, Metric changes.
-*   **L3 (DBA / Private Group)**: Optional SQL fragments or full analysis reports.
+*   **L1 (Management)**: Summary conclusions (e.g., "Database health dropped to 80%").
+*   **L2 (Tech Leads)**:
+    *   **Performance**: Slow SQL HASH + Duration/CPU change.
+    *   **Optimization**: "Table X is missing index for query Y (Est. gain: 50%)".
+*   **L3 (DBA)**: Full SQL text, Execution Plan link, direct `powa-web` URL.
 
 ## 4. User Stories
 
@@ -76,6 +82,7 @@ As a **Technical Lead**, I want to:
 As a **DBA**, I want to:
 *   View **SQL Fragments** or **Full Analysis Reports** for in-depth diagnosis and optimization.
 *   Receive **Detailed Alert Information** to respond to database anomalies immediately.
+*   Receive **Index Optimization Suggestions** to proactively improve system performance before issues arise.
 
 ### 4.4 SysOps
 As a **System Operations Engineer**, I want:
@@ -91,4 +98,4 @@ As a **System Operations Engineer**, I want:
 1.  **Configuration Enhancement**: Support configurable rules (YAML / DSL).
 2.  **Architecture Extension**: Support Multi-instance / Multi-tenancy.
 3.  **Smart Noise Reduction**: Implement push de-duplication and suppression.
-4.  **Correlation Analysis**: Correlate with release/change events.
+94.  **Correlation Analysis**: Correlate with release/change events.

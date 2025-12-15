@@ -21,6 +21,7 @@ graph TD
 *   **Account**: Independent read-only account.
 *   **Scope**: Only `powa` schema aggregation views.
 *   **Restrictions**: No connection to business DBs, no DDL/DML.
+*   **Reference**: See [PoWA Reference](./powa_reference.md) for schema details.
 
 ## 2. Project Layout
 Standard Go Project Layout:
@@ -80,18 +81,32 @@ type AlertContext struct {
     ReportType   string 
     TopSlowSQL   []MetricSnapshot
     Regressions  []RegressionItem
+    Suggestions  []IndexSuggestion
 }
+
+### 4.3 IndexSuggestion
+```go
+type IndexSuggestion struct {
+    Table      string
+    AccessType string // e.g., Seq Scan
+    Columns    []string
+    EstImprovementPercent float64 // HypoPG impact
+}
+```
 ```
 
 ## 5. Component Logic
 
 ### 5.1 Reader
-*   **Target**: `powa_statements` (Live), `powa_statements_history` (Baseline).
+*   **Target**: 
+    *   `powa_statements` (Live) & `powa_statements_history` (Baseline).
+    *   `powa_qualstats_indexes` (Read-only view of suggested indexes).
 *   **Strategy**: Query by time window `ts` range.
 
 ### 5.2 Rule Engine
-1.  **Top N**: Sort current window by `TotalTime` DESC.
+1.  **Top N**: Sort by `TotalTime` DESC. (Check `pg_stat_kcache` for I/O Time if enabled).
 2.  **Regression**: `(Current.MeanTime - Baseline.MeanTime) / Baseline.MeanTime`.
+3.  **Suggestion**: Filter `powa_qualstats_indexes` for high-impact (>30%) missing indexes.
 
 ### 5.3 Notifier
 *   **Retry Policy**: Implement Exponential Backoff (e.g., 1s, 2s, 4s) for network failures.
