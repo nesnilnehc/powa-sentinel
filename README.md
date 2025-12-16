@@ -1,5 +1,7 @@
 # powa-sentinel
 
+[中文文档](./README_zh-CN.md)
+
 powa-sentinel is a lightweight, read-only sidecar service for
 [PoWA (PostgreSQL Workload Analyzer)](https://github.com/powa-team/powa).
 
@@ -60,6 +62,13 @@ v
 Notification Channels (WeCom, Webhook, Email…)
 ```
 
+## Documentation
+
+- [Product Requirements](./docs/en/product/requirements.md)
+- [Architecture & Design](./docs/en/dev/design.md)
+- [PoWA Reference](./docs/en/dev/powa_reference.md)
+- [Deployment Guide](./docs/en/ops/deployment.md)
+
 ## Getting Started
 
 > ⚠️ This project assumes an existing PoWA installation.
@@ -69,8 +78,8 @@ Notification Channels (WeCom, Webhook, Email…)
 - PostgreSQL with PoWA installed
 - Read-only database user with access to PoWA schemas
 - **Recommended Extensions** (on PoWA repository):
-    - `pg_stat_kcache`: For CPU/IO-based slow SQL detection.
-    - `pg_qualstats`: For missing index suggestions.
+  - `pg_stat_kcache`: For CPU/IO-based slow SQL detection.
+  - `pg_qualstats`: For missing index suggestions.
 - WeCom webhook or application credentials
 
 ---
