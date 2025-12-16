@@ -78,6 +78,9 @@ type RegressionItem struct {
 	// DatabaseName is the database where the query runs.
 	DatabaseName string `json:"database_name"`
 
+	// ServerName is the server alias or hostname (PoWA 4+).
+	ServerName string `json:"server_name"`
+
 	// CurrentMeanTime is the mean execution time in the current window.
 	CurrentMeanTime float64 `json:"current_mean_time"`
 

@@ -24,6 +24,9 @@ type Reader struct {
 	cfg          *config.DatabaseConfig
 	hasKCache    bool
 	hasQualStats bool
+	pgVersion    int    // e.g. 140000
+	powaVersion  string // e.g. 4.0.1
+	kcacheTable  string // Detected table name for kcache history
 
 	// extensionsOnce ensures extension check runs only once
 	extensionsOnce sync.Once
@@ -64,9 +67,28 @@ func (r *Reader) Close() error {
 // Thread-safe: uses sync.Once to ensure it only runs once.
 func (r *Reader) checkExtensions(ctx context.Context) error {
 	r.extensionsOnce.Do(func() {
+		// Detect PostgreSQL version
+		var versionNum int
+		err := r.db.QueryRowContext(ctx, "SHOW server_version_num").Scan(&versionNum)
+		if err != nil {
+			r.extensionsErr = fmt.Errorf("detecting PostgreSQL version: %w", err)
+			return
+		}
+		r.pgVersion = versionNum
+
+		// Detect PoWA version
+		var powaVersion string
+		err = r.db.QueryRowContext(ctx, "SELECT extversion FROM pg_extension WHERE extname = 'powa'").Scan(&powaVersion)
+		if err != nil {
+			// If powa extension is missing, we can't do anything
+			r.extensionsErr = fmt.Errorf("detecting PoWA version: %w", err)
+			return
+		}
+		r.powaVersion = powaVersion
+
 		// Check for pg_stat_kcache
 		var hasKCache bool
-		err := r.db.QueryRowContext(ctx, `
+		err = r.db.QueryRowContext(ctx, `
 			SELECT EXISTS (
 				SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_kcache'
 			)
@@ -79,18 +101,46 @@ func (r *Reader) checkExtensions(ctx context.Context) error {
 
 		// Check for pg_qualstats
 		var hasQualStats bool
-		err = r.db.QueryRowContext(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM pg_extension WHERE extname = 'pg_qualstats'
-			)
-		`).Scan(&hasQualStats)
+		err = r.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_qualstats')").Scan(&hasQualStats)
 		if err != nil {
-			r.extensionsErr = fmt.Errorf("checking pg_qualstats: %w", err)
+			r.extensionsErr = fmt.Errorf("checking pg_qualstats extension: %w", err)
 			return
 		}
 		r.hasQualStats = hasQualStats
 
-		log.Printf("Extension check: pg_stat_kcache=%v, pg_qualstats=%v", hasKCache, hasQualStats)
+		// If PoWA 4+ and kcache is enabled, try to find the correct history table
+		if r.hasKCache && r.isPoWA4() {
+			// Search for a table matching powa_%kcache%history (e.g. powa_kcache_history or powa_kcache_metrics_history)
+			// We prefer 'powa_kcache_history' if both exist, so we order by name length
+			var tableName string
+			err := r.db.QueryRowContext(ctx, `
+				SELECT tablename 
+				FROM pg_tables 
+				WHERE schemaname = 'public' 
+				AND tablename LIKE 'powa_%kcache%history'
+				ORDER BY length(tablename) ASC 
+				LIMIT 1
+			`).Scan(&tableName)
+
+			if err != nil {
+				if err == sql.ErrNoRows {
+					log.Printf("Warning: pg_stat_kcache extension present but no history table found in PoWA 4. Disabling kcache enrichment.")
+					r.hasKCache = false
+				} else {
+					// Don't fail completely, just log
+					log.Printf("Warning: error searching for kcache table: %v. Disabling kcache.", err)
+					r.hasKCache = false
+				}
+			} else {
+				r.kcacheTable = tableName
+				log.Printf("Detected PoWA 4 kcache table: %s", tableName)
+			}
+		} else if r.hasKCache && !r.isPoWA4() {
+			// Default for PoWA 3
+			r.kcacheTable = "powa_kcache_metrics_history"
+		}
+
+		log.Printf("Extension check: pg_stat_kcache=%v (table=%s), pg_qualstats=%v, powa_version=%s", r.hasKCache, r.kcacheTable, r.hasQualStats, r.powaVersion)
 	})
 
 	return r.extensionsErr
@@ -104,6 +154,20 @@ func (r *Reader) HasKCache() bool {
 // HasQualStats returns whether pg_qualstats is available.
 func (r *Reader) HasQualStats() bool {
 	return r.hasQualStats
+}
+
+// getExecTimeColumn returns the correct column name for execution time based on PostgreSQL version.
+// PostgreSQL 13+ uses "total_exec_time", earlier versions use "total_time".
+func (r *Reader) getExecTimeColumn() string {
+	if r.pgVersion >= 130000 {
+		return "total_exec_time"
+	}
+	return "total_time"
+}
+
+// isPoWA4 returns true if the detected PoWA version is 4.x or higher.
+func (r *Reader) isPoWA4() bool {
+	return len(r.powaVersion) > 0 && r.powaVersion[0] >= '4'
 }
 
 // GetCurrentMetrics fetches performance metrics for the specified time window.
@@ -133,22 +197,59 @@ func (r *Reader) GetBaselineMetrics(ctx context.Context, offset, window time.Dur
 // getMetrics fetches metrics for a specific time range.
 func (r *Reader) getMetrics(ctx context.Context, startTime, endTime time.Time) ([]model.MetricSnapshot, error) {
 	// Use LIMIT to prevent unbounded result sets
-	query := fmt.Sprintf(`
-		SELECT 
-			ps.queryid,
-			ps.query,
-			pd.datname,
-			COALESCE(SUM(ps.total_exec_time), 0) as total_time,
-			COALESCE(AVG(ps.mean_exec_time), 0) as mean_time,
-			COALESCE(SUM(ps.calls), 0) as calls,
-			MAX(ps.ts) as ts
-		FROM powa_statements_history ps
-		JOIN powa_databases pd ON ps.dbid = pd.oid
-		WHERE ps.ts >= $1 AND ps.ts <= $2
-		GROUP BY ps.queryid, ps.query, pd.datname
-		ORDER BY total_time DESC
-		LIMIT %d
-	`, MaxQueryRows)
+	var query string
+
+	if r.isPoWA4() {
+		// PoWA 4 uses a nested "records" array and queryid/dbid/srvid structure
+		// We unnest the records to get the individual metrics
+		// Note: PoWA 4 records typically use standardized field names like total_exec_time
+		// We also join with powa_servers to get the server alias/name
+		query = fmt.Sprintf(`
+			SELECT 
+				ps.queryid,
+				s.query,
+				pd.datname,
+				COALESCE(srv.alias, srv.hostname || ':' || CAST(srv.port AS TEXT)) as server_name,
+				ps.srvid,
+				COALESCE(SUM((r).total_exec_time), 0) as total_time,
+				COALESCE(SUM((r).total_exec_time) / NULLIF(SUM((r).calls), 0), 0) as mean_time,
+				COALESCE(SUM((r).calls), 0) as calls,
+				MAX((r).ts) as ts
+			FROM powa_statements_history ps
+			CROSS JOIN LATERAL unnest(ps.records) as r
+			JOIN powa_databases pd ON ps.srvid = pd.srvid AND ps.dbid = pd.oid
+			JOIN powa_statements s ON ps.srvid = s.srvid AND ps.queryid = s.queryid AND ps.dbid = s.dbid AND ps.userid = s.userid
+			JOIN powa_servers srv ON ps.srvid = srv.id
+			WHERE ps.coalesce_range && tstzrange($1::timestamptz, $2::timestamptz, '[]')
+			AND (r).ts >= $1 AND (r).ts <= $2
+			GROUP BY ps.queryid, s.query, pd.datname, server_name, ps.srvid
+			ORDER BY total_time DESC
+			LIMIT %d
+		`, MaxQueryRows)
+	} else {
+		// PoWA 3 uses flat columns
+		// Dynamically select the correct column name based on PostgreSQL version
+		execTimeCol := r.getExecTimeColumn()
+		query = fmt.Sprintf(`
+			SELECT 
+				ps.queryid,
+				s.query,
+				pd.datname,
+				'local' as server_name,
+				0 as srvid,
+				COALESCE(SUM(ps.%s), 0) as total_time,
+				COALESCE(SUM(ps.%s) / NULLIF(SUM(ps.calls), 0), 0) as mean_time,
+				COALESCE(SUM(ps.calls), 0) as calls,
+				MAX(ps.ts) as ts
+			FROM powa_statements_history ps
+			JOIN powa_databases pd ON ps.dbid = pd.oid
+			JOIN powa_statements s ON ps.queryid = s.queryid AND ps.dbid = s.dbid AND ps.userid = s.userid
+			WHERE ps.ts >= $1 AND ps.ts <= $2
+			GROUP BY ps.queryid, s.query, pd.datname
+			ORDER BY total_time DESC
+			LIMIT %d
+		`, execTimeCol, execTimeCol, MaxQueryRows)
+	}
 
 	rows, err := r.db.QueryContext(ctx, query, startTime, endTime)
 	if err != nil {
@@ -158,24 +259,25 @@ func (r *Reader) getMetrics(ctx context.Context, startTime, endTime time.Time) (
 
 	var snapshots []model.MetricSnapshot
 	for rows.Next() {
-		var s model.MetricSnapshot
-		err := rows.Scan(
-			&s.QueryID,
-			&s.Query,
-			&s.DatabaseName,
-			&s.TotalTime,
-			&s.MeanTime,
-			&s.Calls,
-			&s.Timestamp,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("scanning row: %w", err)
+		var m model.MetricSnapshot
+		if err := rows.Scan(
+			&m.QueryID,
+			&m.Query,
+			&m.DatabaseName,
+			&m.ServerName,
+			&m.SrvID,
+			&m.TotalTime,
+			&m.MeanTime,
+			&m.Calls,
+			&m.Timestamp,
+		); err != nil {
+			return nil, fmt.Errorf("scanning metrics row: %w", err)
 		}
-		snapshots = append(snapshots, s)
+		snapshots = append(snapshots, m)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating rows: %w", err)
+		return nil, fmt.Errorf("iterating metrics rows: %w", err)
 	}
 
 	// If pg_stat_kcache is available, enrich with CPU/IO data
@@ -191,55 +293,78 @@ func (r *Reader) getMetrics(ctx context.Context, startTime, endTime time.Time) (
 
 // enrichWithKCache adds pg_stat_kcache metrics to the snapshots.
 func (r *Reader) enrichWithKCache(ctx context.Context, snapshots []model.MetricSnapshot, startTime, endTime time.Time) error {
-	query := `
-		SELECT 
-			queryid,
-			COALESCE(SUM(reads), 0) as reads_blks,
-			COALESCE(SUM(writes), 0) as writes_blks,
-			COALESCE(SUM(user_time), 0) as user_cpu_time,
-			COALESCE(SUM(system_time), 0) as system_cpu_time
-		FROM powa_kcache_metrics_history
-		WHERE ts >= $1 AND ts <= $2
-		GROUP BY queryid
-	`
+	var query string
+	if r.isPoWA4() {
+		// PoWA 4 schema - using discovered table
+		query = fmt.Sprintf(`
+			SELECT 
+				k.queryid,
+				k.srvid,
+				COALESCE(SUM((r).exec_reads), 0) as reads_blks,
+				COALESCE(SUM((r).exec_writes), 0) as writes_blks,
+				COALESCE(SUM((r).exec_user_time), 0) as user_cpu_time,
+				COALESCE(SUM((r).exec_system_time), 0) as system_cpu_time
+			FROM %s k
+			CROSS JOIN LATERAL unnest(k.records) as r
+			WHERE k.coalesce_range && tstzrange($1::timestamptz, $2::timestamptz, '[]')
+			AND (r).ts >= $1 AND (r).ts <= $2
+			GROUP BY k.queryid, k.srvid
+		`, r.kcacheTable)
+	} else {
+		// PoWA 3 schema (legacy)
+		query = fmt.Sprintf(`
+			SELECT 
+				queryid,
+				0 as srvid,
+				COALESCE(SUM(reads), 0) as reads_blks,
+				COALESCE(SUM(writes), 0) as writes_blks,
+				COALESCE(SUM(user_time), 0) as user_cpu_time,
+				COALESCE(SUM(system_time), 0) as system_cpu_time
+			FROM %s
+			WHERE ts >= $1 AND ts <= $2
+			GROUP BY queryid
+		`, r.kcacheTable)
+	}
 
 	rows, err := r.db.QueryContext(ctx, query, startTime, endTime)
 	if err != nil {
-		return fmt.Errorf("querying powa_kcache_metrics_history: %w", err)
+		// Don't fail the whole analysis if kcache enrichment fails
+		fmt.Printf("Warning: failed to enrich with kcache data: %v\n", err)
+		return nil
 	}
 	defer rows.Close()
 
-	// Build a map for quick lookup
-	kcacheData := make(map[int64]struct {
-		ReadsBlks     int64
-		WritesBlks    int64
-		UserCPUTime   float64
-		SystemCPUTime float64
-	})
-
-	for rows.Next() {
-		var queryID int64
-		var reads, writes int64
-		var userCPU, sysCPU float64
-		if err := rows.Scan(&queryID, &reads, &writes, &userCPU, &sysCPU); err != nil {
-			return fmt.Errorf("scanning kcache row: %w", err)
-		}
-		kcacheData[queryID] = struct {
-			ReadsBlks     int64
-			WritesBlks    int64
-			UserCPUTime   float64
-			SystemCPUTime float64
-		}{reads, writes, userCPU, sysCPU}
+	type kcacheKey struct {
+		queryID int64
+		srvID   int
 	}
 
-	// Enrich snapshots
+	type kcacheData struct {
+		reads      int64
+		writes     int64
+		userTime   float64
+		systemTime float64
+	}
+
+	kcacheMap := make(map[kcacheKey]kcacheData)
+	for rows.Next() {
+		var qid int64
+		var srvID int
+		var data kcacheData
+		if err := rows.Scan(&qid, &srvID, &data.reads, &data.writes, &data.userTime, &data.systemTime); err != nil {
+			continue
+		}
+		kcacheMap[kcacheKey{qid, srvID}] = data
+	}
+
 	for i := range snapshots {
-		if kc, ok := kcacheData[snapshots[i].QueryID]; ok {
-			snapshots[i].ReadsBlks = kc.ReadsBlks
-			snapshots[i].WritesBlks = kc.WritesBlks
-			snapshots[i].UserCPUTime = kc.UserCPUTime
-			snapshots[i].SystemCPUTime = kc.SystemCPUTime
-			snapshots[i].HasKCacheData = true
+		m := &snapshots[i]
+		if data, ok := kcacheMap[kcacheKey{m.QueryID, m.SrvID}]; ok {
+			m.ReadsBlks = data.reads
+			m.WritesBlks = data.writes
+			m.UserCPUTime = data.userTime
+			m.SystemCPUTime = data.systemTime
+			m.HasKCacheData = true
 		}
 	}
 

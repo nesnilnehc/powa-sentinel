@@ -21,6 +21,14 @@ func TestReader_checkExtensions(t *testing.T) {
 		cfg: &config.DatabaseConfig{},
 	}
 
+	// Expect version detection query (new requirement)
+	mock.ExpectQuery("SHOW server_version_num").
+		WillReturnRows(sqlmock.NewRows([]string{"server_version_num"}).AddRow("140000"))
+
+	// Expect PoWA version detection (default to 3.x for existing tests)
+	mock.ExpectQuery("SELECT extversion FROM pg_extension WHERE extname = 'powa'").
+		WillReturnRows(sqlmock.NewRows([]string{"extversion"}).AddRow("3.2.0"))
+
 	// Expect check for pg_stat_kcache
 	mock.ExpectQuery("SELECT EXISTS.*pg_stat_kcache").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
@@ -28,6 +36,17 @@ func TestReader_checkExtensions(t *testing.T) {
 	// Expect check for pg_qualstats
 	mock.ExpectQuery("SELECT EXISTS.*pg_qualstats").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	// Expect KCache table search (PoWA 3.2.0 is detected, but logic runs if hasKCache is true. 
+	// Wait, isPoWA4() returns false for 3.2.0. So table search is SKIPPED.
+	// So NO new query expectation needed for PoWA 3 test case in checkExtensions 
+	// UNLESS we change the mock version to 4.x.
+	// The current mock uses "3.2.0". 
+	// My code: if r.hasKCache && r.isPoWA4() { search }
+	// So for "3.2.0", it skips search.
+	// And sets r.kcacheTable = "powa_kcache_metrics_history" (else block).
+	// So NO NEW MOCK needed here.
+
 
 	if err := r.checkExtensions(context.Background()); err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -54,9 +73,10 @@ func TestReader_GetMetrics(t *testing.T) {
 	defer db.Close()
 
 	r := &Reader{
-		db:        db,
-		cfg:       &config.DatabaseConfig{},
-		hasKCache: true, // Simulate kcache available
+		db:          db,
+		cfg:         &config.DatabaseConfig{},
+		hasKCache:   true, // Simulate kcache available
+		kcacheTable: "powa_kcache_metrics_history",
 	}
 
 	// Mock data
@@ -66,14 +86,14 @@ func TestReader_GetMetrics(t *testing.T) {
 	// Note: We use a regex for the query matching because whitespace/formatting might vary
 	mock.ExpectQuery("SELECT.*powa_statements_history").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"queryid", "query", "datname", "total_time", "mean_time", "calls", "ts"}).
-			AddRow(1001, "SELECT 1", "postgres", 100.0, 10.0, 10, now))
+		WillReturnRows(sqlmock.NewRows([]string{"queryid", "query", "datname", "server_name", "srvid", "total_time", "mean_time", "calls", "ts"}).
+			AddRow(1001, "SELECT 1", "postgres", "local", 0, 100.0, 10.0, 10, now))
 
 	// Expect kcache enrichment query (since hasKCache=true)
 	mock.ExpectQuery("SELECT.*powa_kcache_metrics_history").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnRows(sqlmock.NewRows([]string{"queryid", "reads", "writes", "user_time", "sys_time"}).
-			AddRow(1001, 50, 10, 5.0, 1.0))
+		WillReturnRows(sqlmock.NewRows([]string{"queryid", "srvid", "reads", "writes", "user_time", "sys_time"}).
+			AddRow(1001, 0, 50, 10, 5.0, 1.0))
 
 	metrics, err := r.getMetrics(context.Background(), now.Add(-1*time.Hour), now)
 	if err != nil {
@@ -114,6 +134,11 @@ func TestReader_GetIndexSuggestions(t *testing.T) {
 
 	// 1. Test when extensions check fails/not run yet
 	// Mock checkExtensions first call
+	// First: version detection
+	mock.ExpectQuery("SHOW server_version_num").
+		WillReturnRows(sqlmock.NewRows([]string{"server_version_num"}).AddRow("140000"))
+	mock.ExpectQuery("SELECT extversion FROM pg_extension WHERE extname = 'powa'").
+		WillReturnRows(sqlmock.NewRows([]string{"extversion"}).AddRow("3.2.0"))
 	mock.ExpectQuery("SELECT EXISTS.*pg_stat_kcache").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectQuery("SELECT EXISTS.*pg_qualstats").
@@ -136,6 +161,56 @@ func TestReader_GetIndexSuggestions(t *testing.T) {
 	s := suggestions[0]
 	if s.Table != "users" {
 		t.Errorf("expected table users, got %s", s.Table)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+func TestReader_GetMetrics_PoWA4(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	defer db.Close()
+
+	r := &Reader{
+		db:          db,
+		cfg:         &config.DatabaseConfig{},
+		hasKCache:   true,
+		powaVersion: "4.0.1", // Simulate PoWA 4
+		kcacheTable: "powa_kcache_history",
+	}
+
+	now := time.Now()
+
+	// Expect PoWA 4 style query (using unnest)
+	// We check for "CROSS JOIN LATERAL unnest" to verify it's the correct query
+	// Use (?s) to enable dot-matches-newline for multi-line query matching
+	mock.ExpectQuery(`(?s)SELECT.*powa_statements_history.*unnest`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"queryid", "query", "datname", "server_name", "srvid", "total_time", "mean_time", "calls", "ts"}).
+			AddRow(1001, "SELECT 1", "postgres", "server1", 1, 100.0, 10.0, 10, now))
+
+	// Expect PoWA 4 style kcache query (using exec_ prefix and powa_kcache_history)
+	mock.ExpectQuery(`(?s)SELECT.*exec_reads.*powa_kcache_history`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"queryid", "srvid", "reads", "writes", "user_time", "sys_time"}).
+			AddRow(1001, 1, 50, 10, 5.0, 1.0))
+
+	metrics, err := r.getMetrics(context.Background(), now.Add(-1*time.Hour), now)
+	if err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if len(metrics) != 1 {
+		t.Fatalf("expected 1 metric, got %d", len(metrics))
+	}
+
+	m := metrics[0]
+	if m.QueryID != 1001 {
+		t.Errorf("expected queryID 1001, got %d", m.QueryID)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

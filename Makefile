@@ -25,15 +25,33 @@ build:
 	CGO_ENABLED=0 go build $(LDFLAGS) -o bin/$(BINARY_NAME) ./cmd/powa-sentinel
 
 ## build-linux: Build for Linux (amd64)
-build-linux:
+build-linux: build-linux-amd64
+
+## build-linux-amd64: Build for Linux (amd64)
+build-linux-amd64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-linux-amd64 ./cmd/powa-sentinel
 
-## build-darwin: Build for macOS (arm64)
-build-darwin:
+## build-linux-arm64: Build for Linux (arm64)
+build-linux-arm64:
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-linux-arm64 ./cmd/powa-sentinel
+
+## build-darwin: Build for macOS (universal/both)
+build-darwin: build-darwin-amd64 build-darwin-arm64
+
+## build-darwin-amd64: Build for macOS (intel)
+build-darwin-amd64:
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-darwin-amd64 ./cmd/powa-sentinel
+
+## build-darwin-arm64: Build for macOS (apple silicon)
+build-darwin-arm64:
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-darwin-arm64 ./cmd/powa-sentinel
 
-## build-all: Build for all platforms
-build-all: build-linux build-darwin
+## build-windows: Build for Windows (amd64)
+build-windows:
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-windows-amd64.exe ./cmd/powa-sentinel
+
+## build-all: Build for all supported platforms
+build-all: build-linux-amd64 build-linux-arm64 build-darwin-amd64 build-darwin-arm64 build-windows
 
 ## clean: Remove build artifacts
 clean:

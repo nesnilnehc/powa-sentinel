@@ -15,6 +15,12 @@ type MetricSnapshot struct {
 	// DatabaseName is the name of the database where the query was executed.
 	DatabaseName string `json:"database_name"`
 
+	// ServerName is the alias or hostname of the server (PoWA 4+).
+	ServerName string `json:"server_name"`
+
+	// SrvID is the internal PoWA server ID (PoWA 4+).
+	SrvID int `json:"srvid"`
+
 	// TotalTime is the total time spent executing the query in milliseconds.
 	TotalTime float64 `json:"total_time"`
 

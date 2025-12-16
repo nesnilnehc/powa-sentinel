@@ -23,7 +23,7 @@ type WeComNotifier struct {
 
 // wecomMessage represents the WeCom webhook message format.
 type wecomMessage struct {
-	MsgType  string          `json:"msgtype"`
+	MsgType  string           `json:"msgtype"`
 	Markdown *markdownContent `json:"markdown,omitempty"`
 	Text     *textContent     `json:"text,omitempty"`
 }
@@ -68,14 +68,28 @@ func (w *WeComNotifier) Name() string {
 func (w *WeComNotifier) Send(ctx context.Context, alert *model.AlertContext) error {
 	content := w.formatMessage(alert)
 
-	msg := wecomMessage{
-		MsgType: "markdown",
-		Markdown: &markdownContent{
-			Content: content,
-		},
+	// Split message if it exceeds WeCom limit (4096 bytes)
+	chunks := splitMessage(content, 4096)
+
+	for i, chunk := range chunks {
+		// Add pagination indicator if multiple chunks
+		if len(chunks) > 1 {
+			chunk += fmt.Sprintf("\n\n*(Part %d/%d)*", i+1, len(chunks))
+		}
+
+		msg := wecomMessage{
+			MsgType: "markdown",
+			Markdown: &markdownContent{
+				Content: chunk,
+			},
+		}
+
+		if err := w.sendWithRetry(ctx, msg); err != nil {
+			return fmt.Errorf("failed to send chunk %d: %w", i+1, err)
+		}
 	}
 
-	return w.sendWithRetry(ctx, msg)
+	return nil
 }
 
 // formatMessage creates a markdown message from the alert context.
@@ -116,11 +130,15 @@ func (w *WeComNotifier) formatMessage(alert *model.AlertContext) string {
 				sb.WriteString(fmt.Sprintf("... and %d more\n", len(alert.TopSlowSQL)-5))
 				break
 			}
-			sb.WriteString(fmt.Sprintf("**%d. Query ID**: `%d`\n", i+1, q.QueryID))
+			serverInfo := q.DatabaseName
+			if q.ServerName != "" && q.ServerName != "local" {
+				serverInfo = fmt.Sprintf("%s/%s", q.ServerName, q.DatabaseName)
+			}
+			sb.WriteString(fmt.Sprintf("**%d. [%s] Query ID**: `%d`\n", i+1, serverInfo, q.QueryID))
 			sb.WriteString(fmt.Sprintf("   - Total Time: %.2fms | Calls: %d\n", q.TotalTime, q.Calls))
-			// Truncate query for readability
-			queryPreview := truncateQuery(q.Query, 80)
-			sb.WriteString(fmt.Sprintf("   - `%s`\n", queryPreview))
+			// Truncate query for readability and use code block
+			queryPreview := truncateQuery(q.Query, 300)
+			sb.WriteString(fmt.Sprintf("```sql\n%s\n```\n", queryPreview))
 		}
 		sb.WriteString("\n")
 	}
@@ -129,14 +147,21 @@ func (w *WeComNotifier) formatMessage(alert *model.AlertContext) string {
 	if len(alert.Regressions) > 0 {
 		sb.WriteString("### 📈 Performance Regressions\n")
 		for i, r := range alert.Regressions {
-			if i >= 3 { // Limit to top 3 in message
-				sb.WriteString(fmt.Sprintf("... and %d more\n", len(alert.Regressions)-3))
+			if i >= 10 { // Limit to top 10 in message (increased from 3 as requested)
+				sb.WriteString(fmt.Sprintf("... and %d more\n", len(alert.Regressions)-10))
 				break
 			}
+			serverInfo := r.DatabaseName
+			if r.ServerName != "" && r.ServerName != "local" {
+				serverInfo = fmt.Sprintf("%s/%s", r.ServerName, r.DatabaseName)
+			}
 			severityIcon := getSeverityIcon(r.Severity)
-			sb.WriteString(fmt.Sprintf("%s **Query ID**: `%d` (%s)\n", severityIcon, r.QueryID, r.Severity))
+			sb.WriteString(fmt.Sprintf("%s **[%s] Query ID**: `%d` (%s)\n", severityIcon, serverInfo, r.QueryID, r.Severity))
 			sb.WriteString(fmt.Sprintf("   - Mean Time: %.2fms → %.2fms (**+%.1f%%**)\n",
 				r.BaselineMeanTime, r.CurrentMeanTime, r.ChangePercent))
+			// Truncate query for readability and use code block
+			queryPreview := truncateQuery(r.Query, 300)
+			sb.WriteString(fmt.Sprintf("```sql\n%s\n```\n", queryPreview))
 		}
 		sb.WriteString("\n")
 	}
@@ -258,4 +283,67 @@ func truncateQuery(query string, maxLen int) string {
 		return query
 	}
 	return query[:maxLen-3] + "..."
+}
+
+// truncateMessage truncates the final markdown message to fit WeCom limits.
+func truncateMessage(msg string, maxLen int) string {
+	if len(msg) <= maxLen {
+		return msg
+	}
+	truncMsg := "\n\n...(message truncated due to size limit)"
+	return msg[:maxLen-len(truncMsg)] + truncMsg
+}
+
+// splitMessage splits the markdown message into chunks that fit within WeCom limits.
+func splitMessage(msg string, maxLen int) []string {
+	// Account for the suffix overhead: "\n\n*(Part X/Y)*" which is roughly 20 bytes.
+	// We also leave some safety buffer for JSON escaping overhead (though Go's json.Marshal handles it,
+	// byte length can grow if there are many characters needing escape).
+	// A safe chunk size is slightly smaller than the hard limit.
+	const safeLimit = 4000
+
+	if len(msg) <= safeLimit {
+		return []string{msg}
+	}
+
+	var chunks []string
+	var currentChunk strings.Builder
+	lines := strings.Split(msg, "\n")
+
+	for _, line := range lines {
+		// Calculate potential new length: current + newline + line
+		newLen := currentChunk.Len() + len(line) + 1
+
+		if newLen > safeLimit {
+			// If current chunk is not empty, flush it
+			if currentChunk.Len() > 0 {
+				chunks = append(chunks, currentChunk.String())
+				currentChunk.Reset()
+			}
+
+			// Handle case where a single line is massive (larger than safeLimit)
+			// This shouldn't happen often with our SQL truncation, but good to be safe.
+			// We force truncate/split it to avoid infinite loop or oversize payload.
+			if len(line) > safeLimit {
+				// Simple split for massive lines
+				for len(line) > safeLimit {
+					chunks = append(chunks, line[:safeLimit])
+					line = line[safeLimit:]
+				}
+				currentChunk.WriteString(line)
+				continue
+			}
+		}
+
+		if currentChunk.Len() > 0 {
+			currentChunk.WriteString("\n")
+		}
+		currentChunk.WriteString(line)
+	}
+
+	if currentChunk.Len() > 0 {
+		chunks = append(chunks, currentChunk.String())
+	}
+
+	return chunks
 }

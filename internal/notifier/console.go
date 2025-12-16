@@ -64,9 +64,24 @@ func (c *ConsoleNotifier) Send(ctx context.Context, alert *model.AlertContext) e
 
 	if len(alert.Regressions) > 0 {
 		sb.WriteString("\n📈 REGRESSIONS\n")
+		count := 0
 		for i, r := range alert.Regressions {
-			sb.WriteString(fmt.Sprintf("  %d. [%d] %.2fms → %.2fms (+%.1f%%) [%s]\n",
-				i+1, r.QueryID, r.BaselineMeanTime, r.CurrentMeanTime, r.ChangePercent, r.Severity))
+			if count >= 20 {
+				sb.WriteString(fmt.Sprintf("  ... and %d more\n", len(alert.Regressions)-20))
+				break
+			}
+			count++
+			serverInfo := r.DatabaseName
+			if r.ServerName != "" && r.ServerName != "local" {
+				serverInfo = fmt.Sprintf("%s/%s", r.ServerName, r.DatabaseName)
+			}
+			sb.WriteString(fmt.Sprintf("  %d. [%d] [%s] %.2fms → %.2fms (+%.1f%%) [%s]\n",
+				i+1, r.QueryID, serverInfo, r.BaselineMeanTime, r.CurrentMeanTime, r.ChangePercent, r.Severity))
+			query := strings.Join(strings.Fields(r.Query), " ")
+			if len(query) > 60 {
+				query = query[:57] + "..."
+			}
+			sb.WriteString(fmt.Sprintf("      %s\n", query))
 		}
 	}
 

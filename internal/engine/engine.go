@@ -127,16 +127,33 @@ func (e *Engine) detectRegressions(current, baseline []model.MetricSnapshot) []m
 	}
 
 	// Build baseline lookup map
-	baselineMap := make(map[int64]model.MetricSnapshot)
+	// Use a composite key to handle same queryID across different servers/databases
+	type comparisonKey struct {
+		queryID int64
+		server  string
+		db      string
+	}
+
+	baselineMap := make(map[comparisonKey]model.MetricSnapshot)
 	for _, m := range baseline {
-		baselineMap[m.QueryID] = m
+		key := comparisonKey{
+			queryID: m.QueryID,
+			server:  m.ServerName,
+			db:      m.DatabaseName,
+		}
+		baselineMap[key] = m
 	}
 
 	threshold := e.cfg.Rules.Regression.ThresholdPercent
 	var regressions []model.RegressionItem
 
 	for _, curr := range current {
-		base, exists := baselineMap[curr.QueryID]
+		key := comparisonKey{
+			queryID: curr.QueryID,
+			server:  curr.ServerName,
+			db:      curr.DatabaseName,
+		}
+		base, exists := baselineMap[key]
 		if !exists || base.MeanTime == 0 {
 			continue
 		}
@@ -148,6 +165,7 @@ func (e *Engine) detectRegressions(current, baseline []model.MetricSnapshot) []m
 				QueryID:          curr.QueryID,
 				Query:            curr.Query,
 				DatabaseName:     curr.DatabaseName,
+				ServerName:       curr.ServerName,
 				CurrentMeanTime:  curr.MeanTime,
 				BaselineMeanTime: base.MeanTime,
 				ChangePercent:    changePercent,
