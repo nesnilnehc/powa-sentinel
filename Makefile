@@ -109,3 +109,14 @@ version:
 	@echo "Version: $(VERSION)"
 	@echo "Commit:  $(COMMIT)"
 	@echo "Date:    $(BUILD_DATE)"
+
+## release: Create release tag (usage: make release RELEASE_VERSION=v0.2.0)
+release:
+	@if [ -z "$(RELEASE_VERSION)" ]; then echo "Usage: make release RELEASE_VERSION=v0.2.0"; exit 1; fi
+	@echo "Creating tag $(RELEASE_VERSION)..."
+	git tag -a $(RELEASE_VERSION) -m "Release $(RELEASE_VERSION)"
+	@echo ""
+	@echo "Tag created. Next steps:"
+	@echo "  1. Push tag:    git push origin $(RELEASE_VERSION)"
+	@echo "  2. (Optional) Create GitHub Release and/or run: goreleaser release --clean"
+	@echo "  See docs/github-actions-goreleaser-coordination.md for details."
