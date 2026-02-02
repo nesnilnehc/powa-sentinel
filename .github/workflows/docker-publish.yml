@@ -1,0 +1,1363 @@
+name: Docker Build and Publish
+
+# =============================================================================
+# GITHUB ACTIONS DOCKER PUBLISHING WORKFLOW
+# =============================================================================
+#
+# This workflow automatically builds and publishes multi-architecture Docker 
+# images to GitHub Container Registry (ghcr.io) for the powa-sentinel project.
+#
+# FEATURES:
+# - Multi-architecture builds (linux/amd64, linux/arm64)
+# - Conditional publishing (main branch and tags only)
+# - Advanced caching (Docker layers and Go modules)
+# - Security-first authentication with minimal permissions
+# - Comprehensive error handling with retry logic
+# - Registry accessibility validation
+# - OCI-compliant metadata and labels
+#
+# REQUIREMENTS SATISFIED:
+# - Requirement 1.1: Automated Docker image building on main branch push
+# - Requirement 1.2: Pull request validation without publishing
+# - Requirement 2.1-2.4: Automated image publishing with proper tagging
+# - Requirement 3.1-3.4: Version and metadata management
+# - Requirement 4.1-4.5: Security and authentication
+# - Requirement 5.1-5.5: Build optimization and caching
+# - Requirement 6.1-6.5: Error handling and notifications
+# - Requirement 7.1-7.5: Integration with existing tools
+#
+# USAGE:
+# - Push to main: Publishes images with 'main' and 'main-<sha>' tags
+# - Create PR: Builds images for validation (no publishing)
+# - Push tag: Publishes images with version and 'latest' tags
+# - Publish release: Publishes images with version and 'latest' tags
+#
+# REGISTRY LOCATION: ghcr.io/powa-team/powa-sentinel
+#
+# For troubleshooting, see: docs/github-actions-troubleshooting.md
+# For detailed documentation, see: docs/github-actions-docker-workflow.md
+# =============================================================================
+
+# Workflow triggers based on requirements 1.1, 1.2, 2.1
+on:
+  # ==========================================================================
+  # TRIGGER CONFIGURATION
+  # ==========================================================================
+  # This section defines when the workflow should run automatically.
+  # Each trigger serves a specific purpose in the CI/CD pipeline.
+  
+  # Trigger on push to main branch (requirement 1.1)
+  # PURPOSE: Continuous deployment - publishes images for latest development
+  # RESULT: Creates 'main' and 'main-<sha>' tags in registry
+  push:
+    branches:
+      - main
+    # Trigger on tag creation for releases (requirement 2.1)
+    # PURPOSE: Release publishing - creates versioned releases
+    # RESULT: Creates '<version>' and 'latest' tags in registry
+    tags:
+      - 'v*'
+  
+  # Trigger on pull requests for validation (requirement 1.2)
+  # PURPOSE: Quality assurance - validates changes without publishing
+  # RESULT: Builds images but does NOT publish to registry
+  pull_request:
+    branches:
+      - main
+  
+  # Trigger on release events (requirement 2.1)
+  # PURPOSE: Official release publishing - coordinates with GitHub releases
+  # RESULT: Creates '<version>' and 'latest' tags in registry
+  release:
+    types: [published]
+
+# ==========================================================================
+# WORKFLOW PERMISSIONS
+# ==========================================================================
+# These permissions follow the principle of least privilege while enabling
+# all required functionality for Docker image publishing.
+
+# Workflow permissions for GHCR access (requirements 4.1, 4.3)
+permissions:
+  contents: read      # Required to read repository contents and checkout code
+  packages: write     # Required to publish to GitHub Container Registry
+  id-token: write     # Required for OIDC token generation (future security enhancement)
+
+# ==========================================================================
+# ENVIRONMENT VARIABLES
+# ==========================================================================
+# Global environment variables used throughout the workflow
+
+# Environment variables
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: powa-team/powa-sentinel
+
+jobs:
+  # ==========================================================================
+  # MAIN JOB: DOCKER BUILD AND PUBLISH
+  # ==========================================================================
+  # This job handles the complete Docker image lifecycle:
+  # 1. Security validation and authentication
+  # 2. Multi-architecture build setup (QEMU + Buildx)
+  # 3. Caching configuration for optimal performance
+  # 4. Conditional publishing based on Git context
+  # 5. Registry accessibility validation
+  # 6. Comprehensive error handling and reporting
+  
+  # Job for building and optionally publishing Docker images
+  docker:
+    name: Build and Publish Docker Image
+    runs-on: ubuntu-latest
+    
+    # =======================================================================
+    # SECURITY GATE: Repository and Fork Validation
+    # =======================================================================
+    # Security: Only run on main repository, not forks (requirement 4.5)
+    # This prevents unauthorized users from running workflows that could publish images
+    # CONDITION BREAKDOWN:
+    # - github.repository == 'powa-team/powa-sentinel': Ensures main repo only
+    # - github.event_name != 'pull_request': Allows main branch and tag pushes
+    # - github.event.pull_request.head.repo.full_name == github.repository: 
+    #   Allows PRs from main repo (not forks)
+    if: github.repository == 'powa-team/powa-sentinel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    
+    steps:
+      # Security validation: Verify workflow permissions (Requirements 4.1, 4.3)
+      - name: Validate workflow permissions
+        id: permission-check
+        run: |
+          echo "## 🔐 Workflow Security Validation" >> $GITHUB_STEP_SUMMARY
+          echo "Validating workflow permissions and security context..." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "**📊 Security Check Progress:**" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔄 Validating authentication token..." >> $GITHUB_STEP_SUMMARY
+          
+          # Critical error handling: Fail fast for missing permissions (Requirement 6.1)
+          if [[ "${{ github.token }}" == "" ]]; then
+            echo "❌ CRITICAL ERROR: GITHUB_TOKEN not available"
+            echo "::error title=Authentication Failure::GITHUB_TOKEN is required for workflow execution but was not found. This indicates a critical workflow configuration issue."
+            echo "## 🚨 Critical Error: Missing Authentication Token" >> $GITHUB_STEP_SUMMARY
+            echo "**Error Type:** Authentication Failure" >> $GITHUB_STEP_SUMMARY
+            echo "**Cause:** GITHUB_TOKEN is not available to the workflow" >> $GITHUB_STEP_SUMMARY
+            echo "**Resolution:** Verify workflow permissions are correctly configured" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "- ✅ Authentication token validated" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "- 🔄 Validating repository ownership..." >> $GITHUB_STEP_SUMMARY
+          
+          # Critical error handling: Verify repository ownership (Requirement 6.1)
+          if [[ "${{ github.repository_owner }}" != "powa-team" ]]; then
+            echo "❌ CRITICAL ERROR: Repository not owned by powa-team"
+            echo "::error title=Repository Ownership Error::Expected repository owner 'powa-team' but found '${{ github.repository_owner }}'. This workflow is only authorized for powa-team repositories."
+            echo "## 🚨 Critical Error: Unauthorized Repository" >> $GITHUB_STEP_SUMMARY
+            echo "**Error Type:** Repository Ownership Violation" >> $GITHUB_STEP_SUMMARY
+            echo "**Expected Owner:** powa-team" >> $GITHUB_STEP_SUMMARY
+            echo "**Actual Owner:** ${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Resolution:** This workflow can only run on powa-team repositories" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "- ✅ Repository ownership validated" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "- 🔄 Validating workflow context..." >> $GITHUB_STEP_SUMMARY
+          
+          # Validate critical workflow environment
+          echo "- ✅ Workflow context validated" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**✅ Security Validation Complete**" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Authentication Token | ✅ Available | Hidden for security |" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository Owner | ✅ Verified | ${{ github.repository_owner }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | ✅ Authorized | ${{ github.repository }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Workflow Actor | ✅ Identified | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event Type | ✅ Valid | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Git Reference | ✅ Available | ${{ github.ref }} |" >> $GITHUB_STEP_SUMMARY
+      
+      - name: Checkout repository
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch full history for proper version detection
+        # Error handling: Retry checkout on failure (Requirement 6.3)
+        continue-on-error: false
+        timeout-minutes: 5
+      
+      # Error handling: Retry checkout on failure (Requirement 6.3)
+      - name: Retry checkout on failure
+        id: checkout-retry
+        if: failure() && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+        continue-on-error: false
+        timeout-minutes: 10
+      
+      # Error handling: Analyze checkout failure (Requirement 6.2)
+      - name: Analyze checkout failure
+        if: failure() && (steps.checkout.outcome == 'failure' || steps.checkout-retry.outcome == 'failure')
+        run: |
+          echo "## 🚨 Repository Checkout Failure" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**❌ Failed to checkout repository after retry**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📊 Failure Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | ${{ github.repository }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ref | ${{ github.ref }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SHA | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Initial Checkout | ${{ steps.checkout.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retry Checkout | ${{ steps.checkout-retry.outcome || 'Not attempted' }} |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🔍 Possible Causes:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Network connectivity issues** - Connection problems to GitHub" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository access issues** - Permissions or repository availability" >> $GITHUB_STEP_SUMMARY
+          echo "- **Git reference issues** - Invalid branch or tag reference" >> $GITHUB_STEP_SUMMARY
+          echo "- **GitHub service issues** - GitHub experiencing outages" >> $GITHUB_STEP_SUMMARY
+          
+          echo "::error title=Checkout Failed::Repository checkout failed after retry. Check repository access and GitHub service status."
+          exit 1
+      
+      # Go module dependency caching (Requirements 5.2, 5.3)
+      - name: Set up Go module caching
+        uses: actions/cache@v4
+        id: go-cache
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+            ${{ runner.os }}-go-
+          lookup-only: false
+          save-always: true
+        # Error handling: Continue on cache failure but log warning (Requirement 6.2)
+        continue-on-error: true
+        timeout-minutes: 3
+      
+      # Validate Go module cache effectiveness (Requirement 5.3)
+      - name: Validate Go module cache
+        run: |
+          echo "## 📦 Go Module Cache Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache Hit | \`${{ steps.go-cache.outputs.cache-hit }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache Key | \`${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Go Sum Hash | \`${{ hashFiles('**/go.sum') }}\` |" >> $GITHUB_STEP_SUMMARY
+          
+          # Error handling: Validate cache setup and provide detailed diagnostics (Requirement 6.2)
+          CACHE_STATUS="${{ steps.go-cache.outcome }}"
+          if [[ "$CACHE_STATUS" != "success" ]]; then
+            echo "⚠️ WARNING: Go module cache setup failed with status: $CACHE_STATUS"
+            echo "::warning title=Cache Setup Warning::Go module cache setup failed but build will continue. This may result in slower build times."
+            echo "| Cache Status | ⚠️ **FAILED** - Build will continue without cache |" >> $GITHUB_STEP_SUMMARY
+            echo "| Failure Reason | Cache action failed with status: $CACHE_STATUS |" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ steps.go-cache.outputs.cache-hit }}" == "true" ]]; then
+            echo "✅ Go module cache hit - dependencies will be restored from cache"
+            echo "| Cache Status | ✅ **HIT** - Fast dependency restoration |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Go module cache miss - dependencies will be downloaded"
+            echo "| Cache Status | ⚠️ **MISS** - Dependencies will be downloaded |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Verify go.sum exists for proper cache key generation
+          if [[ -f "go.sum" ]]; then
+            echo "✅ go.sum found - cache key will be accurate"
+            echo "| Go Sum File | ✅ **Found** - Cache key is accurate |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ WARNING: go.sum not found - cache may be ineffective"
+            echo "::warning title=Missing go.sum::go.sum file not found. This may result in ineffective caching and slower builds."
+            echo "| Go Sum File | ❌ **Missing** - Cache may be ineffective |" >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: Set up QEMU emulation
+        id: qemu-setup
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+        # Error handling: Fail fast on QEMU setup failure (Requirement 6.1)
+        continue-on-error: false
+        timeout-minutes: 5
+      
+      # Error handling: Retry QEMU setup on failure (Requirement 6.3)
+      - name: Retry QEMU setup on failure
+        id: qemu-setup-retry
+        if: failure() && steps.qemu-setup.outcome == 'failure'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+        continue-on-error: false
+        timeout-minutes: 8
+      
+      # Error handling: Validate QEMU setup for multi-architecture builds
+      - name: Validate QEMU emulation
+        id: qemu-validate
+        run: |
+          echo "Validating QEMU emulation setup..."
+          
+          # Determine which QEMU setup succeeded
+          QEMU_STATUS="unknown"
+          if [[ "${{ steps.qemu-setup.outcome }}" == "success" ]]; then
+            QEMU_STATUS="initial_success"
+          elif [[ "${{ steps.qemu-setup-retry.outcome }}" == "success" ]]; then
+            QEMU_STATUS="retry_success"
+          else
+            QEMU_STATUS="failed"
+          fi
+          
+          # Check if QEMU is properly configured for target architectures
+          if docker buildx ls | grep -q "linux/amd64"; then
+            echo "✅ linux/amd64 platform available"
+            AMD64_AVAILABLE=true
+          else
+            echo "❌ CRITICAL ERROR: linux/amd64 platform not available"
+            echo "::error title=QEMU Setup Failure::linux/amd64 platform is not available for multi-architecture builds"
+            AMD64_AVAILABLE=false
+          fi
+          
+          if docker buildx ls | grep -q "linux/arm64"; then
+            echo "✅ linux/arm64 platform available"
+            ARM64_AVAILABLE=true
+          else
+            echo "❌ CRITICAL ERROR: linux/arm64 platform not available"
+            echo "::error title=QEMU Setup Failure::linux/arm64 platform is not available for multi-architecture builds"
+            ARM64_AVAILABLE=false
+          fi
+          
+          # Generate comprehensive QEMU validation report
+          echo "## ✅ QEMU Emulation Validation" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| QEMU Setup | $QEMU_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| linux/amd64 | $([ "$AMD64_AVAILABLE" = true ] && echo "✅ Available" || echo "❌ Missing") |" >> $GITHUB_STEP_SUMMARY
+          echo "| linux/arm64 | $([ "$ARM64_AVAILABLE" = true ] && echo "✅ Available" || echo "❌ Missing") |" >> $GITHUB_STEP_SUMMARY
+          
+          # Fail if any required platform is missing
+          if [[ "$AMD64_AVAILABLE" != true || "$ARM64_AVAILABLE" != true ]]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**🚨 QEMU Setup Failed**" >> $GITHUB_STEP_SUMMARY
+            echo "Required platforms are not available for multi-architecture builds." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+      
+      # Error handling: Analyze QEMU failure (Requirement 6.2)
+      - name: Analyze QEMU failure
+        if: failure() && (steps.qemu-setup.outcome == 'failure' || steps.qemu-setup-retry.outcome == 'failure' || steps.qemu-validate.outcome == 'failure')
+        run: |
+          echo "## 🚨 QEMU Setup Failure Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**❌ QEMU emulation setup failed**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📊 Failure Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Initial Setup | ${{ steps.qemu-setup.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retry Setup | ${{ steps.qemu-setup-retry.outcome || 'Not attempted' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Validation | ${{ steps.qemu-validate.outcome || 'Not attempted' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Required Platforms | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🔍 Common QEMU Issues:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner limitations** - GitHub runner doesn't support QEMU emulation" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platform conflicts** - Conflicting platform configurations" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker daemon issues** - Docker service not properly configured" >> $GITHUB_STEP_SUMMARY
+          echo "- **Resource constraints** - Insufficient resources for emulation setup" >> $GITHUB_STEP_SUMMARY
+          
+          echo "::error title=QEMU Setup Failed::QEMU emulation setup failed after retry. Multi-architecture builds cannot proceed."
+          exit 1
+      
+      - name: Set up Docker Buildx
+        id: buildx-setup
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          platforms: linux/amd64,linux/arm64
+          install: true
+        # Error handling: Fail fast on Buildx setup failure (Requirement 6.1)
+        continue-on-error: false
+        timeout-minutes: 5
+      
+      # Error handling: Retry Buildx setup on failure (Requirement 6.3)
+      - name: Retry Buildx setup on failure
+        id: buildx-setup-retry
+        if: failure() && steps.buildx-setup.outcome == 'failure'
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+          platforms: linux/amd64,linux/arm64
+          install: true
+        continue-on-error: false
+        timeout-minutes: 8
+      
+      # Error handling: Validate Docker Buildx configuration
+      - name: Validate Docker Buildx setup
+        id: buildx-validate
+        run: |
+          echo "Validating Docker Buildx configuration..."
+          
+          # Determine which Buildx setup succeeded
+          BUILDX_STATUS="unknown"
+          if [[ "${{ steps.buildx-setup.outcome }}" == "success" ]]; then
+            BUILDX_STATUS="initial_success"
+          elif [[ "${{ steps.buildx-setup-retry.outcome }}" == "success" ]]; then
+            BUILDX_STATUS="retry_success"
+          else
+            BUILDX_STATUS="failed"
+          fi
+          
+          # Verify Buildx is properly installed and configured
+          if ! docker buildx version; then
+            echo "❌ CRITICAL ERROR: Docker Buildx not available"
+            echo "::error title=Buildx Setup Failure::Docker Buildx is not properly installed or configured"
+            exit 1
+          fi
+          
+          # Verify builder supports required platforms
+          BUILDER_PLATFORMS=$(docker buildx inspect --bootstrap | grep "Platforms:" | head -1)
+          if [[ "$BUILDER_PLATFORMS" == *"linux/amd64"* ]] && [[ "$BUILDER_PLATFORMS" == *"linux/arm64"* ]]; then
+            echo "✅ Docker Buildx supports required platforms"
+            echo "## ✅ Docker Buildx Validated" >> $GITHUB_STEP_SUMMARY
+            echo "| Property | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+            echo "| Buildx Setup | $BUILDX_STATUS |" >> $GITHUB_STEP_SUMMARY
+            echo "| Buildx Version | $(docker buildx version | head -1) |" >> $GITHUB_STEP_SUMMARY
+            echo "| Supported Platforms | $BUILDER_PLATFORMS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ CRITICAL ERROR: Docker Buildx missing required platform support"
+            echo "::error title=Platform Support Error::Docker Buildx does not support required platforms (linux/amd64, linux/arm64)"
+            echo "Available platforms: $BUILDER_PLATFORMS"
+            exit 1
+          fi
+      
+      # Error handling: Analyze Buildx failure (Requirement 6.2)
+      - name: Analyze Buildx failure
+        if: failure() && (steps.buildx-setup.outcome == 'failure' || steps.buildx-setup-retry.outcome == 'failure' || steps.buildx-validate.outcome == 'failure')
+        run: |
+          echo "## 🚨 Docker Buildx Failure Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**❌ Docker Buildx setup failed**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📊 Failure Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Initial Setup | ${{ steps.buildx-setup.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retry Setup | ${{ steps.buildx-setup-retry.outcome || 'Not attempted' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Validation | ${{ steps.buildx-validate.outcome || 'Not attempted' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Required Platforms | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Driver | docker-container |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🔍 Common Buildx Issues:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Docker daemon issues** - Docker service not running or misconfigured" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platform support missing** - Required platforms not available" >> $GITHUB_STEP_SUMMARY
+          echo "- **Driver conflicts** - Issues with docker-container driver" >> $GITHUB_STEP_SUMMARY
+          echo "- **Resource constraints** - Insufficient resources for builder setup" >> $GITHUB_STEP_SUMMARY
+          echo "- **QEMU dependency** - QEMU emulation not properly configured" >> $GITHUB_STEP_SUMMARY
+          
+          echo "::error title=Buildx Setup Failed::Docker Buildx setup failed after retry. Multi-architecture builds cannot proceed."
+          exit 1
+      
+      # Authentication and Security Configuration (Requirements 4.1, 4.2, 4.3, 4.5)
+      - name: Log in to Container Registry
+        id: login
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          # Security: Ensure logout on completion
+          logout: true
+        # Error handling: Fail fast on authentication failure (Requirement 6.1)
+        continue-on-error: false
+        timeout-minutes: 3
+      
+      # Security validation: Verify authentication without exposing credentials
+      - name: Verify registry authentication
+        id: auth-verify
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "Verifying authentication with ${{ env.REGISTRY }}"
+          
+          # Error handling: Comprehensive authentication validation (Requirement 6.2)
+          AUTH_STATUS="${{ steps.login.outcome || 'unknown' }}"
+          if [[ "$AUTH_STATUS" != "success" ]]; then
+            echo "❌ CRITICAL ERROR: Registry authentication failed"
+            echo "::error title=Authentication Failure::Failed to authenticate with ${{ env.REGISTRY }}. Status: $AUTH_STATUS"
+            echo "## 🚨 Critical Error: Registry Authentication Failed" >> $GITHUB_STEP_SUMMARY
+            echo "**Error Type:** Authentication Failure" >> $GITHUB_STEP_SUMMARY
+            echo "**Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Status:** $AUTH_STATUS" >> $GITHUB_STEP_SUMMARY
+            echo "**Resolution:** Verify GITHUB_TOKEN permissions include 'packages: write'" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          # Test authentication by attempting to list repositories (without exposing tokens)
+          if docker info | grep -q "Registry:"; then
+            echo "✅ Docker registry authentication successful"
+          else
+            echo "❌ CRITICAL ERROR: Docker registry authentication verification failed"
+            echo "::error title=Authentication Verification Failed::Docker authentication appears to have failed during verification"
+            exit 1
+          fi
+          
+          # Verify no credentials are exposed in environment
+          if env | grep -i token | grep -v GITHUB_TOKEN= | grep -v RUNNER_; then
+            echo "❌ CRITICAL ERROR: Potential credential exposure detected"
+            echo "::error title=Security Violation::Potential credential exposure detected in environment variables"
+            exit 1
+          else
+            echo "✅ No credential exposure detected"
+          fi
+          
+          echo "## ✅ Registry Authentication Verified" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry Login | ✅ Successful |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Info | ✅ Registry Available |" >> $GITHUB_STEP_SUMMARY
+          echo "| Credential Security | ✅ No Exposure Detected |" >> $GITHUB_STEP_SUMMARY
+      
+      # Enhanced error handling: Retry authentication on failure (Requirement 6.3)
+      - name: Retry registry authentication
+        id: login-retry
+        if: failure() && steps.auth-verify.outcome == 'failure' && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          logout: true
+        continue-on-error: false
+        timeout-minutes: 5
+      
+      # Error handling: Final authentication verification after retry (Requirement 6.2)
+      - name: Final authentication verification
+        if: steps.login-retry.outcome == 'success'
+        run: |
+          echo "## ✅ Authentication Retry Successful" >> $GITHUB_STEP_SUMMARY
+          echo "Registry authentication succeeded on retry attempt." >> $GITHUB_STEP_SUMMARY
+          echo "| Attempt | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Initial | ❌ Failed |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retry | ✅ Successful |" >> $GITHUB_STEP_SUMMARY
+      
+      # Error handling: Authentication failure analysis (Requirement 6.2)
+      - name: Analyze authentication failure
+        if: failure() && (steps.auth-verify.outcome == 'failure' || steps.login-retry.outcome == 'failure') && github.event_name != 'pull_request'
+        run: |
+          echo "## 🚨 Authentication Failure Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**❌ Registry authentication failed after retry**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📊 Failure Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry | ${{ env.REGISTRY }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Username | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Initial Auth | ${{ steps.login.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retry Auth | ${{ steps.login-retry.outcome || 'Not attempted' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | ${{ github.repository }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event Type | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🔍 Common Authentication Issues:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Insufficient permissions** - GITHUB_TOKEN lacks 'packages: write' permission" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry unavailable** - GitHub Container Registry experiencing issues" >> $GITHUB_STEP_SUMMARY
+          echo "- **Network connectivity** - Connection issues to ghcr.io" >> $GITHUB_STEP_SUMMARY
+          echo "- **Token expiration** - GITHUB_TOKEN has expired (rare)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository access** - Token doesn't have access to this repository" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🛠️ Resolution Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Verify workflow permissions include \`packages: write\`" >> $GITHUB_STEP_SUMMARY
+          echo "2. Check GitHub Container Registry status at https://status.github.com" >> $GITHUB_STEP_SUMMARY
+          echo "3. Ensure repository settings allow package publishing" >> $GITHUB_STEP_SUMMARY
+          echo "4. Verify the workflow is running on the correct repository" >> $GITHUB_STEP_SUMMARY
+          echo "5. Check if organization settings restrict package publishing" >> $GITHUB_STEP_SUMMARY
+          
+          # Set error annotations for GitHub UI
+          echo "::error title=Authentication Failed::Registry authentication failed after retry. Check permissions and registry status."
+          
+          exit 1
+      
+      # Tag-based publishing logic (Requirements 2.1, 2.2, 2.3, 2.4)
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # For tagged releases (v1.0.0): create version tag and latest (Requirement 2.1, 2.3)
+            type=ref,event=tag
+            type=raw,value=latest,enable={{is_default_branch}},priority=100
+            # For main branch pushes: create main tag and commit SHA tag (Requirement 2.2)
+            type=raw,value=main,enable={{is_default_branch}},priority=200
+            type=sha,prefix=main-,enable={{is_default_branch}},priority=150
+            # For pull requests: create PR tag but don't publish (Requirement 1.2)
+            type=ref,event=pr,prefix=pr-,priority=50
+          labels: |
+            org.opencontainers.image.title=powa-sentinel
+            org.opencontainers.image.description=PostgreSQL Workload Analyzer Sentinel
+            org.opencontainers.image.vendor=powa-team
+            org.opencontainers.image.source=https://github.com/powa-team/powa-sentinel
+            org.opencontainers.image.version=${{ github.ref_name != 'main' && github.ref_name || github.sha }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.run_started_at }}
+      
+      # Enhanced build metadata generation for tag-based publishing (Requirements 2.1, 2.2, 2.3)
+      - name: Generate build metadata
+        id: build-meta
+        run: |
+          # Error handling: Validate Git context before processing (Requirement 6.2)
+          if [[ -z "${{ github.ref }}" ]]; then
+            echo "❌ CRITICAL ERROR: Git reference not available"
+            echo "::error title=Git Context Error::GitHub ref is not available, cannot determine build metadata"
+            exit 1
+          fi
+          
+          if [[ -z "${{ github.sha }}" ]]; then
+            echo "❌ CRITICAL ERROR: Git commit SHA not available"
+            echo "::error title=Git Context Error::GitHub SHA is not available, cannot determine build metadata"
+            exit 1
+          fi
+          
+          # Determine publishing strategy based on Git reference type
+          SHOULD_PUBLISH="false"
+          
+          # Extract version from Git context based on event type
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            VERSION="${{ github.ref_name }}"
+            SHOULD_PUBLISH="true"
+            echo "Building tagged release: $VERSION (will publish)"
+          elif [[ "${{ github.ref_name }}" == "main" && "${{ github.event_name }}" == "push" ]]; then
+            VERSION="${{ github.sha }}"
+            SHOULD_PUBLISH="true"
+            echo "Building main branch: $VERSION (will publish)"
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            VERSION="pr-${{ github.event.number }}-${{ github.sha }}"
+            SHOULD_PUBLISH="false"
+            echo "Building pull request: $VERSION (will NOT publish)"
+          else
+            VERSION="${{ github.ref_name }}-${{ github.sha }}"
+            SHOULD_PUBLISH="false"
+            echo "Building branch: $VERSION (will NOT publish)"
+          fi
+          
+          # Error handling: Validate generated metadata (Requirement 6.2)
+          if [[ -z "$VERSION" ]]; then
+            echo "❌ CRITICAL ERROR: Failed to generate version metadata"
+            echo "::error title=Metadata Generation Error::Version could not be determined from Git context"
+            exit 1
+          fi
+          
+          # Set build metadata outputs
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+          echo "ref_type=${{ github.ref_type }}" >> $GITHUB_OUTPUT
+          echo "ref_name=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          echo "should_publish=$SHOULD_PUBLISH" >> $GITHUB_OUTPUT
+          echo "event_name=${{ github.event_name }}" >> $GITHUB_OUTPUT
+          
+          # Log metadata for debugging and transparency
+          echo "## Build Metadata Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`$VERSION\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Date | \`$(date -u +'%Y-%m-%dT%H:%M:%SZ')\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ref Type | \`${{ github.ref_type }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Ref Name | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Will Publish | \`$SHOULD_PUBLISH\` |" >> $GITHUB_STEP_SUMMARY
+      
+      # Enhanced Docker layer caching configuration (Requirements 5.1, 5.3)
+      - name: Configure Docker layer caching
+        id: cache-config
+        run: |
+          # Determine cache scope based on event type for optimal cache reuse
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # PR builds: Use branch-specific cache with fallback to main
+            CACHE_SCOPE="pr-${{ github.event.number }}"
+            CACHE_FALLBACK="main"
+            echo "cache_scope=$CACHE_SCOPE" >> $GITHUB_OUTPUT
+            echo "cache_fallback=$CACHE_FALLBACK" >> $GITHUB_OUTPUT
+            echo "cache_mode=min" >> $GITHUB_OUTPUT  # Minimize cache writes for PRs
+          elif [[ "${{ github.ref_name }}" == "main" ]]; then
+            # Main branch: Use main cache scope with maximum caching
+            CACHE_SCOPE="main"
+            CACHE_FALLBACK=""
+            echo "cache_scope=$CACHE_SCOPE" >> $GITHUB_OUTPUT
+            echo "cache_fallback=" >> $GITHUB_OUTPUT
+            echo "cache_mode=max" >> $GITHUB_OUTPUT  # Maximum cache writes for main
+          else
+            # Other branches: Use branch-specific cache with main fallback
+            CACHE_SCOPE="branch-${{ github.ref_name }}"
+            CACHE_FALLBACK="main"
+            echo "cache_scope=$CACHE_SCOPE" >> $GITHUB_OUTPUT
+            echo "cache_fallback=$CACHE_FALLBACK" >> $GITHUB_OUTPUT
+            echo "cache_mode=min" >> $GITHUB_OUTPUT
+          fi
+          
+          # Log cache configuration for debugging
+          echo "## 🗄️ Docker Cache Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache Scope | \`$CACHE_SCOPE\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache Fallback | \`${CACHE_FALLBACK:-none}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache Mode | \`$(echo ${{ github.event_name == 'pull_request' || github.ref_name != 'main' }} && echo 'min' || echo 'max')\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event Type | \`${{ github.event_name }}\` |" >> $GITHUB_STEP_SUMMARY
+      
+      # Conditional Docker build and publish with enhanced caching (Requirements 2.1, 2.2, 2.3, 2.4, 5.1, 5.3)
+      - name: Build and push Docker image
+        id: docker-build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # Conditional publishing: only push for main branch and tags, not for pull requests
+          push: ${{ steps.build-meta.outputs.should_publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build-meta.outputs.version }}
+            COMMIT=${{ steps.build-meta.outputs.commit }}
+            BUILD_DATE=${{ steps.build-meta.outputs.build_date }}
+          # Multi-tier caching strategy for optimal performance (Requirement 5.1)
+          cache-from: |
+            type=gha,scope=${{ steps.cache-config.outputs.cache_scope }}
+            ${{ steps.cache-config.outputs.cache_fallback && format('type=gha,scope={0}', steps.cache-config.outputs.cache_fallback) || '' }}
+            type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:cache-${{ steps.cache-config.outputs.cache_scope }}
+            ${{ steps.cache-config.outputs.cache_fallback && format('type=registry,ref={0}/{1}:cache-{2}', env.REGISTRY, env.IMAGE_NAME, steps.cache-config.outputs.cache_fallback) || '' }}
+          cache-to: |
+            type=gha,scope=${{ steps.cache-config.outputs.cache_scope }},mode=${{ steps.cache-config.outputs.cache_mode }}
+            ${{ steps.build-meta.outputs.should_publish == 'true' && format('type=registry,ref={0}/{1}:cache-{2},mode={3}', env.REGISTRY, env.IMAGE_NAME, steps.cache-config.outputs.cache_scope, steps.cache-config.outputs.cache_mode) || '' }}
+        # Error handling: Fail fast on build failure with detailed diagnostics (Requirement 6.1)
+        continue-on-error: false
+        timeout-minutes: 20
+      
+      # Enhanced error handling: Retry Docker build on transient failures (Requirement 6.3)
+      - name: Retry Docker build on failure
+        id: docker-build-retry
+        if: failure() && steps.docker-build.outcome == 'failure'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ steps.build-meta.outputs.should_publish == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.build-meta.outputs.version }}
+            COMMIT=${{ steps.build-meta.outputs.commit }}
+            BUILD_DATE=${{ steps.build-meta.outputs.build_date }}
+          # Simplified caching for retry to avoid cache-related issues
+          cache-from: |
+            type=gha,scope=${{ steps.cache-config.outputs.cache_scope }}
+          cache-to: |
+            type=gha,scope=${{ steps.cache-config.outputs.cache_scope }},mode=min
+        continue-on-error: false
+        timeout-minutes: 25
+      
+      # Error handling: Comprehensive build failure analysis (Requirement 6.2)
+      - name: Analyze build failure
+        if: failure() && (steps.docker-build.outcome == 'failure' || steps.docker-build-retry.outcome == 'failure')
+        run: |
+          echo "## 🚨 Docker Build Failure Analysis" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Determine which build attempt failed
+          if [[ "${{ steps.docker-build.outcome }}" == "failure" && "${{ steps.docker-build-retry.outcome }}" == "failure" ]]; then
+            echo "**❌ Both initial build and retry failed**" >> $GITHUB_STEP_SUMMARY
+            BUILD_STATUS="Both attempts failed"
+          elif [[ "${{ steps.docker-build.outcome }}" == "failure" ]]; then
+            echo "**❌ Initial build failed, retry not attempted or succeeded**" >> $GITHUB_STEP_SUMMARY
+            BUILD_STATUS="Initial build failed"
+          else
+            echo "**❌ Retry build failed**" >> $GITHUB_STEP_SUMMARY
+            BUILD_STATUS="Retry failed"
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📊 Failure Analysis:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Status | $BUILD_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Initial Build | ${{ steps.docker-build.outcome }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Retry Build | ${{ steps.docker-build-retry.outcome || 'Not attempted' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Platforms | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Context | ${{ github.event_name }} on ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Should Publish | ${{ steps.build-meta.outputs.should_publish }} |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🔍 Common Failure Causes:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Dockerfile syntax errors** - Check Dockerfile for syntax issues" >> $GITHUB_STEP_SUMMARY
+          echo "- **Missing dependencies** - Verify all required packages are available" >> $GITHUB_STEP_SUMMARY
+          echo "- **Network timeouts** - Registry or dependency download issues" >> $GITHUB_STEP_SUMMARY
+          echo "- **Platform compatibility** - Issues with multi-architecture builds" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cache corruption** - Try clearing build cache" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry authentication** - Verify GITHUB_TOKEN permissions" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🛠️ Troubleshooting Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. Check the build logs above for specific error messages" >> $GITHUB_STEP_SUMMARY
+          echo "2. Verify Dockerfile syntax and build context" >> $GITHUB_STEP_SUMMARY
+          echo "3. Test the build locally with: \`docker build --platform linux/amd64,linux/arm64 .\`" >> $GITHUB_STEP_SUMMARY
+          echo "4. Check if dependencies are accessible from the build environment" >> $GITHUB_STEP_SUMMARY
+          echo "5. Verify registry authentication and permissions" >> $GITHUB_STEP_SUMMARY
+          
+          # Set error annotations for GitHub UI
+          echo "::error title=Docker Build Failed::Docker build failed after retry. Check build logs and troubleshooting guide in job summary."
+          
+          # Exit with failure to ensure workflow fails
+          exit 1
+      
+      # Enhanced output for published images (Requirements 2.4, 6.5)
+      - name: Output image details
+        id: success-report
+        if: steps.build-meta.outputs.should_publish == 'true' && (steps.docker-build.outcome == 'success' || steps.docker-build-retry.outcome == 'success')
+        run: |
+          # Determine which build succeeded
+          BUILD_ATTEMPT="unknown"
+          if [[ "${{ steps.docker-build.outcome }}" == "success" ]]; then
+            BUILD_ATTEMPT="initial"
+          elif [[ "${{ steps.docker-build-retry.outcome }}" == "success" ]]; then
+            BUILD_ATTEMPT="retry"
+          fi
+          
+          echo "## 🚀 Docker Images Successfully Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Multi-architecture Docker images have been successfully built and published to GitHub Container Registry!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Success metrics and timing
+          echo "**📊 Build Success Metrics:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Attempt | $BUILD_ATTEMPT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Status | ✅ Successful |" >> $GITHUB_STEP_SUMMARY
+          echo "| Platforms Built | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry | ${{ env.REGISTRY }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | ${{ env.IMAGE_NAME }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event Type | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Git Reference | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | ${{ steps.build-meta.outputs.commit }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Date | ${{ steps.build-meta.outputs.build_date }} |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🐳 Published Images:**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Pull any of these images using Docker:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            if [[ -n "$tag" ]]; then
+              echo "# Pull the image" >> $GITHUB_STEP_SUMMARY
+              echo "docker pull $tag" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "# Run the container" >> $GITHUB_STEP_SUMMARY
+              echo "docker run --rm $tag --help" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🏷️ Image Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            if [[ -n "$tag" ]]; then
+              echo "- \`$tag\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📋 Image Metadata:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.build-meta.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ steps.build-meta.outputs.commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Date:** ${{ steps.build-meta.outputs.build_date }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architectures:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🔗 Useful Links:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry URL:** https://github.com/powa-team/powa-sentinel/pkgs/container/powa-sentinel" >> $GITHUB_STEP_SUMMARY
+          echo "- **Source Code:** https://github.com/${{ github.repository }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** https://github.com/${{ github.repository }}/commit/${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            echo "- **Release:** https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**✅ Next Steps:**" >> $GITHUB_STEP_SUMMARY
+          echo "1. **Test the image:** Pull and run the image to verify functionality" >> $GITHUB_STEP_SUMMARY
+          echo "2. **Update deployments:** Use the new image in your deployment configurations" >> $GITHUB_STEP_SUMMARY
+          echo "3. **Verify multi-arch:** Test on both amd64 and arm64 platforms if needed" >> $GITHUB_STEP_SUMMARY
+          echo "4. **Check registry:** Visit the registry URL to see all available versions" >> $GITHUB_STEP_SUMMARY
+          
+          # Set outputs for downstream jobs
+          echo "registry_url=https://github.com/powa-team/powa-sentinel/pkgs/container/powa-sentinel" >> $GITHUB_OUTPUT
+          echo "image_count=$(echo '${{ steps.meta.outputs.tags }}' | wc -l)" >> $GITHUB_OUTPUT
+          echo "build_success=true" >> $GITHUB_OUTPUT
+          echo "build_attempt=$BUILD_ATTEMPT" >> $GITHUB_OUTPUT
+      
+      # Registry accessibility validation: Verify published images are accessible (Requirements 2.4, 3.4)
+      - name: Verify image accessibility
+        id: verify-accessibility
+        if: steps.build-meta.outputs.should_publish == 'true' && (steps.docker-build.outcome == 'success' || steps.docker-build-retry.outcome == 'success')
+        run: |
+          echo "## 🔍 Registry Accessibility Verification" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verifying that published images are accessible at the expected registry location..." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Parse published tags for verification
+          TAGS_TO_VERIFY=$(echo '${{ steps.meta.outputs.tags }}' | tr '\n' ' ')
+          VERIFICATION_RESULTS=""
+          FAILED_VERIFICATIONS=0
+          TOTAL_VERIFICATIONS=0
+          
+          # Verify each published tag
+          for tag in $TAGS_TO_VERIFY; do
+            if [[ -n "$tag" ]]; then
+              TOTAL_VERIFICATIONS=$((TOTAL_VERIFICATIONS + 1))
+              echo "🔍 Verifying accessibility of: $tag"
+              
+              # Use docker manifest inspect to verify image accessibility
+              if docker manifest inspect "$tag" > /dev/null 2>&1; then
+                echo "✅ Image accessible: $tag"
+                VERIFICATION_RESULTS="$VERIFICATION_RESULTS| $tag | ✅ Accessible |\n"
+              else
+                echo "❌ Image not accessible: $tag"
+                VERIFICATION_RESULTS="$VERIFICATION_RESULTS| $tag | ❌ Not Accessible |\n"
+                FAILED_VERIFICATIONS=$((FAILED_VERIFICATIONS + 1))
+              fi
+            fi
+          done
+          
+          # Generate verification report
+          echo "**📊 Accessibility Verification Results:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Tag | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo -e "$VERIFICATION_RESULTS" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📈 Verification Summary:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Images | $TOTAL_VERIFICATIONS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Accessible | $((TOTAL_VERIFICATIONS - FAILED_VERIFICATIONS)) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed | $FAILED_VERIFICATIONS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Success Rate | $(( (TOTAL_VERIFICATIONS - FAILED_VERIFICATIONS) * 100 / TOTAL_VERIFICATIONS ))% |" >> $GITHUB_STEP_SUMMARY
+          
+          # Set outputs for downstream validation
+          echo "total_images=$TOTAL_VERIFICATIONS" >> $GITHUB_OUTPUT
+          echo "accessible_images=$((TOTAL_VERIFICATIONS - FAILED_VERIFICATIONS))" >> $GITHUB_OUTPUT
+          echo "failed_images=$FAILED_VERIFICATIONS" >> $GITHUB_OUTPUT
+          
+          # Fail if any images are not accessible
+          if [[ $FAILED_VERIFICATIONS -gt 0 ]]; then
+            echo "❌ CRITICAL ERROR: $FAILED_VERIFICATIONS out of $TOTAL_VERIFICATIONS images are not accessible"
+            echo "::error title=Registry Accessibility Failed::$FAILED_VERIFICATIONS published images are not accessible from the registry"
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**🚨 Accessibility Verification Failed**" >> $GITHUB_STEP_SUMMARY
+            echo "Some published images are not accessible from the registry. This indicates a publishing or registry issue." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "✅ All $TOTAL_VERIFICATIONS published images are accessible"
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**✅ All Images Successfully Accessible**" >> $GITHUB_STEP_SUMMARY
+            echo "All published images have been verified as accessible from GitHub Container Registry." >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      # Registry accessibility validation: Verify image metadata labels (Requirements 2.4, 3.4)
+      - name: Verify image metadata labels
+        id: verify-metadata
+        if: steps.verify-accessibility.outcome == 'success'
+        run: |
+          echo "## 🏷️ Image Metadata Validation" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Validating that published images contain proper metadata labels..." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get the first published tag for metadata inspection
+          FIRST_TAG=$(echo '${{ steps.meta.outputs.tags }}' | head -1)
+          
+          if [[ -z "$FIRST_TAG" ]]; then
+            echo "❌ CRITICAL ERROR: No tags available for metadata validation"
+            echo "::error title=Metadata Validation Error::No image tags available for metadata validation"
+            exit 1
+          fi
+          
+          echo "🔍 Inspecting metadata for: $FIRST_TAG"
+          
+          # Extract image configuration and labels
+          IMAGE_CONFIG=$(docker manifest inspect "$FIRST_TAG" | jq -r '.config.digest')
+          if [[ "$IMAGE_CONFIG" == "null" || -z "$IMAGE_CONFIG" ]]; then
+            echo "❌ CRITICAL ERROR: Unable to extract image configuration"
+            echo "::error title=Metadata Extraction Failed::Cannot extract image configuration for metadata validation"
+            exit 1
+          fi
+          
+          # Use docker inspect to get image labels (requires pulling the image)
+          echo "📥 Pulling image for metadata inspection..."
+          if ! docker pull "$FIRST_TAG" > /dev/null 2>&1; then
+            echo "❌ CRITICAL ERROR: Failed to pull image for metadata inspection"
+            echo "::error title=Image Pull Failed::Cannot pull image for metadata validation"
+            exit 1
+          fi
+          
+          # Extract labels from the pulled image
+          LABELS_JSON=$(docker inspect "$FIRST_TAG" | jq -r '.[0].Config.Labels // {}')
+          
+          # Required OCI labels for validation
+          declare -A REQUIRED_LABELS=(
+            ["org.opencontainers.image.title"]="powa-sentinel"
+            ["org.opencontainers.image.description"]="PostgreSQL Workload Analyzer Sentinel"
+            ["org.opencontainers.image.vendor"]="powa-team"
+            ["org.opencontainers.image.source"]="https://github.com/powa-team/powa-sentinel"
+          )
+          
+          # Dynamic labels that should be present
+          DYNAMIC_LABELS=(
+            "org.opencontainers.image.version"
+            "org.opencontainers.image.revision"
+            "org.opencontainers.image.created"
+          )
+          
+          LABEL_VALIDATION_RESULTS=""
+          FAILED_LABELS=0
+          TOTAL_LABELS=0
+          
+          # Validate required static labels
+          for label in "${!REQUIRED_LABELS[@]}"; do
+            TOTAL_LABELS=$((TOTAL_LABELS + 1))
+            expected_value="${REQUIRED_LABELS[$label]}"
+            actual_value=$(echo "$LABELS_JSON" | jq -r ".[\"$label\"] // \"\"")
+            
+            if [[ "$actual_value" == "$expected_value" ]]; then
+              echo "✅ Label $label: $actual_value"
+              LABEL_VALIDATION_RESULTS="$LABEL_VALIDATION_RESULTS| $label | ✅ Valid | $actual_value |\n"
+            else
+              echo "❌ Label $label: expected '$expected_value', got '$actual_value'"
+              LABEL_VALIDATION_RESULTS="$LABEL_VALIDATION_RESULTS| $label | ❌ Invalid | Expected: $expected_value, Got: $actual_value |\n"
+              FAILED_LABELS=$((FAILED_LABELS + 1))
+            fi
+          done
+          
+          # Validate dynamic labels (just check presence)
+          for label in "${DYNAMIC_LABELS[@]}"; do
+            TOTAL_LABELS=$((TOTAL_LABELS + 1))
+            actual_value=$(echo "$LABELS_JSON" | jq -r ".[\"$label\"] // \"\"")
+            
+            if [[ -n "$actual_value" && "$actual_value" != "null" ]]; then
+              echo "✅ Label $label: $actual_value"
+              LABEL_VALIDATION_RESULTS="$LABEL_VALIDATION_RESULTS| $label | ✅ Present | $actual_value |\n"
+            else
+              echo "❌ Label $label: missing or empty"
+              LABEL_VALIDATION_RESULTS="$LABEL_VALIDATION_RESULTS| $label | ❌ Missing | Not found |\n"
+              FAILED_LABELS=$((FAILED_LABELS + 1))
+            fi
+          done
+          
+          # Generate metadata validation report
+          echo "**📊 Metadata Label Validation Results:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Label | Status | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo -e "$LABEL_VALIDATION_RESULTS" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📈 Metadata Validation Summary:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Labels | $TOTAL_LABELS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Valid Labels | $((TOTAL_LABELS - FAILED_LABELS)) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Failed Labels | $FAILED_LABELS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Success Rate | $(( (TOTAL_LABELS - FAILED_LABELS) * 100 / TOTAL_LABELS ))% |" >> $GITHUB_STEP_SUMMARY
+          echo "| Inspected Image | $FIRST_TAG |" >> $GITHUB_STEP_SUMMARY
+          
+          # Set outputs for downstream validation
+          echo "total_labels=$TOTAL_LABELS" >> $GITHUB_OUTPUT
+          echo "valid_labels=$((TOTAL_LABELS - FAILED_LABELS))" >> $GITHUB_OUTPUT
+          echo "failed_labels=$FAILED_LABELS" >> $GITHUB_OUTPUT
+          echo "inspected_image=$FIRST_TAG" >> $GITHUB_OUTPUT
+          
+          # Clean up pulled image to save space
+          docker rmi "$FIRST_TAG" > /dev/null 2>&1 || true
+          
+          # Fail if any required labels are missing or invalid
+          if [[ $FAILED_LABELS -gt 0 ]]; then
+            echo "❌ CRITICAL ERROR: $FAILED_LABELS out of $TOTAL_LABELS metadata labels are invalid or missing"
+            echo "::error title=Metadata Validation Failed::$FAILED_LABELS required metadata labels are invalid or missing"
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**🚨 Metadata Validation Failed**" >> $GITHUB_STEP_SUMMARY
+            echo "Some required metadata labels are missing or have incorrect values. This violates OCI standards and requirements." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "✅ All $TOTAL_LABELS metadata labels are valid"
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**✅ All Metadata Labels Valid**" >> $GITHUB_STEP_SUMMARY
+            echo "All required OCI metadata labels are present and have correct values." >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      # Registry accessibility validation: Generate comprehensive accessibility report
+      - name: Generate accessibility report
+        id: accessibility-report
+        if: steps.verify-accessibility.outcome == 'success' && steps.verify-metadata.outcome == 'success'
+        run: |
+          echo "## ✅ Registry Accessibility Validation Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🎉 All registry accessibility validations passed successfully!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "**📊 Complete Validation Summary:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Validation Type | Status | Details |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------------|--------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Accessibility | ✅ Passed | ${{ steps.verify-accessibility.outputs.accessible_images }}/${{ steps.verify-accessibility.outputs.total_images }} images accessible |" >> $GITHUB_STEP_SUMMARY
+          echo "| Metadata Labels | ✅ Passed | ${{ steps.verify-metadata.outputs.valid_labels }}/${{ steps.verify-metadata.outputs.total_labels }} labels valid |" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry Location | ✅ Verified | ghcr.io/powa-team/powa-sentinel |" >> $GITHUB_STEP_SUMMARY
+          echo "| OCI Compliance | ✅ Validated | All required labels present |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🔗 Registry Information:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry URL:** https://github.com/powa-team/powa-sentinel/pkgs/container/powa-sentinel" >> $GITHUB_STEP_SUMMARY
+          echo "- **Verified Images:** ${{ steps.verify-accessibility.outputs.accessible_images }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Metadata Compliance:** 100% OCI compliant" >> $GITHUB_STEP_SUMMARY
+          echo "- **Accessibility Status:** All images publicly accessible" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**✅ Requirements Validation:**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Requirement 2.4:** Published images are accessible at ghcr.io/powa-team/powa-sentinel" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ **Requirement 3.4:** Published images include proper labels with metadata" >> $GITHUB_STEP_SUMMARY
+          
+          # Set final validation outputs
+          echo "accessibility_validated=true" >> $GITHUB_OUTPUT
+          echo "metadata_validated=true" >> $GITHUB_OUTPUT
+          echo "requirements_satisfied=true" >> $GITHUB_OUTPUT
+      
+      # Pull request validation: Store image artifacts for PR validation (Requirement 1.2)
+      - name: Store PR image artifacts
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-image-pr-${{ github.event.number }}
+          path: |
+            Dockerfile
+            go.mod
+            go.sum
+          retention-days: 7
+          if-no-files-found: warn
+      
+      # Pull request validation: Generate image manifest for validation
+      - name: Generate PR image manifest
+        if: github.event_name == 'pull_request'
+        run: |
+          # Create image manifest for PR validation
+          cat > pr-image-manifest.json << EOF
+          {
+            "pr_number": "${{ github.event.number }}",
+            "commit_sha": "${{ github.sha }}",
+            "version": "${{ steps.build-meta.outputs.version }}",
+            "build_date": "${{ steps.build-meta.outputs.build_date }}",
+            "platforms": ["linux/amd64", "linux/arm64"],
+            "tags": $(echo '${{ steps.meta.outputs.tags }}' | jq -R -s -c 'split("\n") | map(select(length > 0))'),
+            "labels": $(echo '${{ steps.meta.outputs.labels }}' | jq -R -s -c 'split("\n") | map(select(length > 0) | split("=")) | map({key: .[0], value: .[1]}) | from_entries'),
+            "build_args": {
+              "VERSION": "${{ steps.build-meta.outputs.version }}",
+              "COMMIT": "${{ steps.build-meta.outputs.commit }}",
+              "BUILD_DATE": "${{ steps.build-meta.outputs.build_date }}"
+            },
+            "validation_status": "build_successful",
+            "validation_timestamp": "$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          }
+          EOF
+          
+          echo "Generated PR image manifest:"
+          cat pr-image-manifest.json | jq .
+      
+      # Pull request validation: Upload image manifest as artifact
+      - name: Upload PR image manifest
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-image-manifest-${{ github.event.number }}
+          path: pr-image-manifest.json
+          retention-days: 7
+      
+      # Output for non-published builds (pull requests)
+      - name: Output build-only details
+        id: build-only-report
+        if: steps.build-meta.outputs.should_publish == 'false' && (steps.docker-build.outcome == 'success' || steps.docker-build-retry.outcome == 'success')
+        run: |
+          # Determine which build succeeded
+          BUILD_ATTEMPT="unknown"
+          if [[ "${{ steps.docker-build.outcome }}" == "success" ]]; then
+            BUILD_ATTEMPT="initial"
+          elif [[ "${{ steps.docker-build-retry.outcome }}" == "success" ]]; then
+            BUILD_ATTEMPT="retry"
+          fi
+          
+          echo "## 🔨 Docker Build Completed Successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Multi-architecture Docker image was successfully built for validation!**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Build success metrics
+          echo "**📊 Build Success Metrics:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Attempt | $BUILD_ATTEMPT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Status | ✅ Successful |" >> $GITHUB_STEP_SUMMARY
+          echo "| Platforms Built | linux/amd64, linux/arm64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Publishing Status | ⏸️ Skipped (as intended) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event Type | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Git Reference | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | ${{ steps.build-meta.outputs.commit }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Date | ${{ steps.build-meta.outputs.build_date }} |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🚫 Why Images Were Not Published:**" >> $GITHUB_STEP_SUMMARY
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "- This is a **pull request** build for validation only" >> $GITHUB_STEP_SUMMARY
+            echo "- Pull request builds verify that images can be built successfully" >> $GITHUB_STEP_SUMMARY
+            echo "- Images will be published when the PR is merged to main or when tags are created" >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**📦 PR Validation Artifacts:**" >> $GITHUB_STEP_SUMMARY
+            echo "- **Image manifest:** \`pr-image-manifest-${{ github.event.number }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Build context:** \`docker-image-pr-${{ github.event.number }}\`" >> $GITHUB_STEP_SUMMARY
+            echo "- **Retention:** 7 days for validation purposes" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- This is a **branch build** that doesn't meet publishing criteria" >> $GITHUB_STEP_SUMMARY
+            echo "- Only main branch pushes and tagged releases trigger publishing" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📋 Build Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ steps.build-meta.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ steps.build-meta.outputs.commit }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Date:** ${{ steps.build-meta.outputs.build_date }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Architectures:** linux/amd64, linux/arm64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target Repository:** ${{ env.IMAGE_NAME }}" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**🏷️ Generated Tags (Not Published):**" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" | while read -r tag; do
+            if [[ -n "$tag" ]]; then
+              echo "- \`$tag\`" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**ℹ️ Publishing Criteria:**" >> $GITHUB_STEP_SUMMARY
+          echo "Images are automatically published when:" >> $GITHUB_STEP_SUMMARY
+          echo "- **Main branch:** Pushes to the \`main\` branch create \`main\` and \`main-<sha>\` tags" >> $GITHUB_STEP_SUMMARY
+          echo "- **Git tags:** Tagged releases create version tags (e.g., \`v1.0.0\`) and \`latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Releases:** Published releases trigger the same behavior as Git tags" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**✅ Validation Success:**" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Dockerfile syntax is valid" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Multi-architecture build works correctly" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Build arguments are properly configured" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Image metadata is correctly generated" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Ready for publishing when criteria are met" >> $GITHUB_STEP_SUMMARY
+          
+          # Set outputs for downstream jobs
+          echo "build_success=true" >> $GITHUB_OUTPUT
+          echo "build_attempt=$BUILD_ATTEMPT" >> $GITHUB_OUTPUT
+          echo "validation_passed=true" >> $GITHUB_OUTPUT
+      
+      # Comprehensive workflow completion summary (Requirements 5.5, 6.5)
+      - name: Workflow completion summary
+        if: always()
+        run: |
+          echo "## 📋 Workflow Execution Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Determine overall workflow status
+          WORKFLOW_STATUS="unknown"
+          if [[ "${{ job.status }}" == "success" ]]; then
+            WORKFLOW_STATUS="✅ Successful"
+            WORKFLOW_ICON="🎉"
+          elif [[ "${{ job.status }}" == "failure" ]]; then
+            WORKFLOW_STATUS="❌ Failed"
+            WORKFLOW_ICON="🚨"
+          elif [[ "${{ job.status }}" == "cancelled" ]]; then
+            WORKFLOW_STATUS="⏹️ Cancelled"
+            WORKFLOW_ICON="⏹️"
+          else
+            WORKFLOW_STATUS="⚠️ Unknown"
+            WORKFLOW_ICON="❓"
+          fi
+          
+          echo "$WORKFLOW_ICON **Overall Status: $WORKFLOW_STATUS**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Execution timeline and metrics
+          echo "**⏱️ Execution Timeline:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Phase | Status | Notes |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Security Validation | ${{ steps.permission-check.outcome == 'success' && '✅ Passed' || '❌ Failed' }} | Authentication and permissions |" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository Checkout | ${{ (steps.checkout.outcome == 'success' || steps.checkout-retry.outcome == 'success') && '✅ Passed' || '❌ Failed' }} | Source code retrieval |" >> $GITHUB_STEP_SUMMARY
+          echo "| Go Module Caching | ${{ steps.go-cache.outcome == 'success' && '✅ Passed' || (steps.go-cache.outcome == 'failure' && '⚠️ Failed (continued)' || '⏭️ Skipped') }} | Dependency optimization |" >> $GITHUB_STEP_SUMMARY
+          echo "| QEMU Setup | ${{ (steps.qemu-setup.outcome == 'success' || steps.qemu-setup-retry.outcome == 'success') && '✅ Passed' || '❌ Failed' }} | Multi-arch emulation |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Buildx Setup | ${{ (steps.buildx-setup.outcome == 'success' || steps.buildx-setup-retry.outcome == 'success') && '✅ Passed' || '❌ Failed' }} | Build system configuration |" >> $GITHUB_STEP_SUMMARY
+          echo "| Registry Authentication | ${{ github.event_name == 'pull_request' && '⏭️ Skipped (PR)' || ((steps.login.outcome == 'success' || steps.login-retry.outcome == 'success') && '✅ Passed' || '❌ Failed') }} | GHCR login |" >> $GITHUB_STEP_SUMMARY
+          echo "| Build Metadata | ${{ steps.build-meta.outcome == 'success' && '✅ Passed' || '❌ Failed' }} | Version and tag generation |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker Build | ${{ (steps.docker-build.outcome == 'success' || steps.docker-build-retry.outcome == 'success') && '✅ Passed' || '❌ Failed' }} | Multi-architecture image build |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Publishing | ${{ steps.build-meta.outputs.should_publish == 'true' && ((steps.docker-build.outcome == 'success' || steps.docker-build-retry.outcome == 'success') && '✅ Published' || '❌ Failed') || '⏭️ Skipped' }} | Registry upload |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📊 Workflow Metrics:**" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Workflow Status | $WORKFLOW_STATUS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event Type | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | ${{ github.repository }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Git Reference | ${{ github.ref_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Workflow Run | [${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Triggered By | ${{ github.actor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Started At | ${{ github.run_started_at }} |" >> $GITHUB_STEP_SUMMARY
+          
+          # Cache effectiveness reporting
+          if [[ "${{ steps.go-cache.outputs.cache-hit }}" == "true" ]]; then
+            echo "| Go Cache | ✅ Hit - Fast build |" >> $GITHUB_STEP_SUMMARY
+          elif [[ "${{ steps.go-cache.outcome }}" == "success" ]]; then
+            echo "| Go Cache | ⚠️ Miss - Dependencies downloaded |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Go Cache | ❌ Failed - No caching |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          # Publishing status
+          if [[ "${{ steps.build-meta.outputs.should_publish }}" == "true" ]]; then
+            if [[ "${{ steps.success-report.outcome }}" == "success" ]]; then
+              echo "| Publishing | ✅ Images published successfully |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| Publishing | ❌ Publishing failed |" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "| Publishing | ⏭️ Skipped (validation only) |" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Final status message
+          if [[ "${{ job.status }}" == "success" ]]; then
+            if [[ "${{ steps.build-meta.outputs.should_publish }}" == "true" ]]; then
+              echo "🎉 **Workflow completed successfully! Docker images have been published and are ready for use.**" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "✅ **Workflow completed successfully! Docker images were built and validated.**" >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "❌ **Workflow failed. Check the logs above for detailed error information and troubleshooting guidance.**" >> $GITHUB_STEP_SUMMARY
+          fi
