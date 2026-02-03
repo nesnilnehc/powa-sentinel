@@ -15,7 +15,7 @@ Binary archives: [GitHub Releases](https://github.com/nesnilnehc/powa-sentinel/r
 
 ## Standalone (Systemd)
 
-For VM or bare-metal where PostgreSQL runs:
+For VM or bare-metal where the PoWA repository database (or monitored PostgreSQL) runs:
 
 `/etc/systemd/system/powa-sentinel.service`:
 

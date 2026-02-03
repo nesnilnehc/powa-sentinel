@@ -17,6 +17,8 @@ graph TD
     PUSH --> WECHAT[WeCom / Channels]
 ```
 
+In the diagram, *PostgreSQL* denotes the source of stats (e.g. pg_stat_statements). In single-server mode it is the same as the PoWA repository database; in multi-server mode it represents the monitored instances that feed data to the repository.
+
 ## Data Access Principles
 
 - **Account**: Independent read-only account

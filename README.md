@@ -62,6 +62,8 @@ v
 Notification Channels (WeCom, Webhook, Email…)
 ```
 
+*PostgreSQL* here is the instance(s) where PoWA collects data; in single-server setups it is also the repository database.
+
 ## Documentation
 
 See [docs/README.md](./docs/README.md) for the full index.

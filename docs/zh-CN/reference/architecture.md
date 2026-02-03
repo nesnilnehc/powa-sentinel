@@ -17,6 +17,8 @@ graph TD
     PUSH --> WECHAT[WeCom / Channels]
 ```
 
+图中 *PostgreSQL* 表示统计来源（如 pg_stat_statements）。单机模式下即 PoWA 仓库数据库；多机模式下表示向仓库库上报数据的被监控实例。
+
 ## 数据访问原则
 
 - **账户**：独立只读账户

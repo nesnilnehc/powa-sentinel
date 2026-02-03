@@ -4,11 +4,21 @@
 
 ## PoWA 安装
 
-powa-sentinel 连接 **PoWA 仓库数据库**——即 [PoWA](https://github.com/powa-team/powa) 存储历史数据的 PostgreSQL 实例。
+powa-sentinel 连接 **PoWA 仓库数据库**——即 [PoWA](https://github.com/powa-team/powa) 存储历史数据的 PostgreSQL 实例。下文中也简称「仓库库」或「PoWA 库」。其与被监控的 PostgreSQL 实例在单机/多机下的关系见 [术语与部署模式](../reference/powa-schema.md#terminology)。
 
 - **powa-archivist** 必须已安装并持续采集数据（schema `powa`）。
 - **历史数据**必须启用，且保留时长满足分析窗口需求。
   - 例如：周同比分析至少需要 8 天（> 7 天）数据保留。
+
+## 必须的扩展
+
+以下扩展为 PoWA 与 powa-sentinel 运行所必需。
+
+- **被监控的 PostgreSQL 实例**：在这些实例上安装并启用 `pg_stat_statements`。单机部署时被监控实例即仓库库；多机部署时在每台被监控实例上安装。PoWA 依赖其采集查询执行统计；未安装则没有 `powa_statements` 及历史数据（无法进行慢查询与回归分析）。
+  - 示例：在**仓库库**（单机）或**每台被监控实例**（多机）上以超级用户执行：`CREATE EXTENSION pg_stat_statements;`
+- **PoWA 仓库数据库**：必须存在 `powa` 扩展（由 powa-archivist 安装）。Sentinel 通过 `pg_extension.extversion` 读取 `powa` 版本以判断 3.x/4.x 并选择兼容的查询路径。（单机：与上为同一实例；多机：仅中心仓库库。）
+
+完整组件与可选扩展说明见 [PoWA Schema 参考](../reference/powa-schema.md)。
 
 ## 数据库用户
 
@@ -30,7 +40,7 @@ GRANT SELECT ON ALL TABLES IN SCHEMA powa TO powa_readonly;
 | `pg_stat_kcache` | 基于 CPU/IO 的慢查询检测 |
 | `pg_qualstats` | 缺失索引建议 |
 
-如需更丰富的告警，可在 PoWA 仓库数据库上安装上述扩展。安装后请在 PoWA 所在库以**超级用户**执行**注册**：
+如需更丰富的告警，可在 **PoWA 仓库数据库** 上安装上述扩展。在**仓库库**上以超级用户**注册**。单机时仓库库即被监控实例；多机时仅中心仓库库有 `powa` schema 并需注册。
 
 ```sql
 SELECT powa_kcache_register();   -- pg_stat_kcache
@@ -53,6 +63,8 @@ SELECT powa_qualstats_register(); -- pg_qualstats
 | 要求 | 状态 |
 |------|------|
 | PoWA 及历史数据 | 必需 |
+| `pg_stat_statements` | 必需 |
+| `powa` 扩展 | 必需 |
 | 只读 DB 用户 | 必需 |
 | `pg_stat_kcache` | 可选 |
 | `pg_qualstats` | 可选 |

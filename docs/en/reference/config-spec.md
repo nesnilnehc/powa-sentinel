@@ -8,7 +8,7 @@ The canonical config template is [config/config.yaml.example](../../../config/co
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `host` | string | `127.0.0.1` | PoWA repository host |
+| `host` | string | `127.0.0.1` | Host of the PoWA repository database (the instance powa-sentinel connects to). |
 | `port` | int | `5432` | Port |
 | `user` | string | `powa_readonly` | Database user |
 | `password` | string | — | Required |

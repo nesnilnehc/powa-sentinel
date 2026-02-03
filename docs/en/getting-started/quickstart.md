@@ -33,7 +33,7 @@ notifier:
   type: "console"
 ```
 
-Replace `database` credentials with your PoWA repository connection. Use `console` for local testing; switch to `wecom` for production (see [Configuration](configuration.md)).
+Replace `database` credentials with your PoWA repository database connection. Use `console` for local testing; switch to `wecom` for production (see [Configuration](configuration.md)).
 
 ## 2. Run with Docker
 

@@ -37,7 +37,7 @@ go test -v ./internal/...
 
 ### Integration tests
 
-Requires a running PostgreSQL+PoWA instance (e.g. testcontainers or docker-compose):
+Requires a running PoWA repository database (PostgreSQL with PoWA and, for single-server, the monitored instance is the same). For example: testcontainers or docker-compose.
 
 ```bash
 go test -tags=integration ./tests/...

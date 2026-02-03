@@ -1,6 +1,6 @@
 # PoWA Version Compatibility
 
-powa-sentinel supports specific PoWA (powa-archivist) versions. The version is read from the repository database as `extversion` of the `powa` extension.
+powa-sentinel supports specific PoWA (powa-archivist) versions. The version is read from the repository database as `extversion` of the `powa` extension. (For terminology: [PoWA Schema — Terminology](powa-schema.md#terminology).)
 
 ## Supported PoWA versions
 

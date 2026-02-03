@@ -6,7 +6,7 @@ powa-sentinel 使用 YAML 配置文件。所有项均支持环境变量插值（
 
 | 节 | 键 | 默认值 | 说明 |
 |----|-----|--------|------|
-| `database` | `host`, `port`, `user`, `password`, `dbname`, `sslmode` | — | PoWA 仓库连接 |
+| `database` | `host`, `port`, `user`, `password`, `dbname`, `sslmode` | — | PoWA 仓库数据库连接。术语见 [前置条件](prerequisites.md)。 |
 | `schedule` | `cron`, `timezone` | `0 0 9 * * 1`, `UTC` | Cron 表达式；cron 时间按 `timezone`（IANA）解析 |
 | `analysis` | `window_duration`, `comparison_offset` | `24h`, `168h` | 当前与基线时间窗口 |
 | `rules` | `slow_sql`, `regression`, `index_suggestion` | — | 告警阈值 |

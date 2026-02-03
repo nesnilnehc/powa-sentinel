@@ -70,4 +70,4 @@ Workflow 失败？
 
 ### 「undefined_table」或「undefined_column」错误
 
-若仓库数据库返回未定义表或未定义列错误（例如在查询 `powa_statements_history` 或其他 PoWA 对象时），请确认你的 **PoWA（powa-archivist）版本**在[兼容性说明](../reference/compatibility.md)的支持矩阵内。不支持的版本或版本不匹配会使用不同 schema 并导致此类错误。请确保连接使用的 `search_path` 包含 PoWA 创建视图所在的 schema（通常为 `powa` 或 `public`）。
+若 PoWA 仓库数据库（即 powa-sentinel 所连接的数据库）返回未定义表或未定义列错误（例如在查询 `powa_statements_history` 或其他 PoWA 对象时），请确认你的 **PoWA（powa-archivist）版本**在[兼容性说明](../reference/compatibility.md)的支持矩阵内。不支持的版本或版本不匹配会使用不同 schema 并导致此类错误。请确保连接使用的 `search_path` 包含 PoWA 创建视图所在的 schema（通常为 `powa` 或 `public`）。

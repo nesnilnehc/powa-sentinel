@@ -70,4 +70,4 @@ These warnings do not stop analysis: slow-query and regression checks still run;
 
 ### "undefined_table" or "undefined_column" errors
 
-If the repository database returns errors about an undefined table or column (e.g. when querying `powa_statements_history` or other PoWA objects), check that your **PoWA (powa-archivist) version** is in the [supported compatibility matrix](../reference/compatibility.md). Unsupported or mismatched versions use different schemas and will cause these errors. Ensure your connection `search_path` includes the schema where PoWA created its views (often `powa` or `public`).
+If the PoWA repository database (the database powa-sentinel connects to) returns errors about an undefined table or column (e.g. when querying `powa_statements_history` or other PoWA objects), check that your **PoWA (powa-archivist) version** is in the [supported compatibility matrix](../reference/compatibility.md). Unsupported or mismatched versions use different schemas and will cause these errors. Ensure your connection `search_path` includes the schema where PoWA created its views (often `powa` or `public`).

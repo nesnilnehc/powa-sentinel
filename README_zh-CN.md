@@ -59,6 +59,8 @@ v
 通知渠道 (企业微信, Webhook, Email…)
 ```
 
+此处 *PostgreSQL* 指 PoWA 采集数据的实例；单机部署时也是仓库库。
+
 ## 文档
 
 完整索引见 [docs/README_zh-CN.md](./docs/README_zh-CN.md)。

@@ -33,7 +33,7 @@ notifier:
   type: "console"
 ```
 
-将 `database` 凭证替换为你的 PoWA 仓库连接信息。本地测试使用 `console`；生产环境可改为 `wecom`（见 [配置](configuration.md)）。
+将 `database` 凭证替换为你的 PoWA 仓库数据库连接信息。本地测试使用 `console`；生产环境可改为 `wecom`（见 [配置](configuration.md)）。
 
 ## 2. 使用 Docker 运行
 

@@ -1,6 +1,6 @@
 # PoWA 版本兼容性
 
-powa-sentinel 仅支持特定的 PoWA（powa-archivist）版本。版本从仓库数据库中 `powa` 扩展的 `extversion` 读取。
+powa-sentinel 仅支持特定的 PoWA（powa-archivist）版本。版本从仓库数据库中 `powa` 扩展的 `extversion` 读取。（术语说明见 [PoWA Schema — 术语](powa-schema.md#terminology)。）
 
 ## 支持的 PoWA 版本
 

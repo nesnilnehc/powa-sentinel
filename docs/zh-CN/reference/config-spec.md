@@ -8,7 +8,7 @@
 
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
-| `host` | string | `127.0.0.1` | PoWA 仓库主机 |
+| `host` | string | `127.0.0.1` | PoWA 仓库数据库的主机（即 powa-sentinel 所连接的实例）。 |
 | `port` | int | `5432` | 端口 |
 | `user` | string | `powa_readonly` | 数据库用户 |
 | `password` | string | — | 必填 |

@@ -15,7 +15,7 @@ ghcr.io/nesnilnehc/powa-sentinel:v0.1.0
 
 ## 独立部署 (Systemd)
 
-适用于运行 PostgreSQL 的 VM 或裸机：
+适用于运行 PoWA 仓库数据库（或被监控 PostgreSQL）的 VM 或裸机：
 
 `/etc/systemd/system/powa-sentinel.service`：
 

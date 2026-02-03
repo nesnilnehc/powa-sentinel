@@ -37,7 +37,7 @@ go test -v ./internal/...
 
 ### 集成测试
 
-需运行中的 PostgreSQL+PoWA 实例（如 testcontainers 或 docker-compose）：
+需运行中的 PoWA 仓库数据库（带 PoWA 的 PostgreSQL；单机时即被监控实例）。例如：testcontainers 或 docker-compose。
 
 ```bash
 go test -tags=integration ./tests/...

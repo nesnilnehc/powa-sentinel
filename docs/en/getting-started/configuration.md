@@ -6,7 +6,7 @@ powa-sentinel uses a YAML config file. All settings support environment variable
 
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
-| `database` | `host`, `port`, `user`, `password`, `dbname`, `sslmode` | — | PoWA repository connection |
+| `database` | `host`, `port`, `user`, `password`, `dbname`, `sslmode` | — | PoWA repository database connection. See [Prerequisites](prerequisites.md) for terminology. |
 | `schedule` | `cron`, `timezone` | `0 0 9 * * 1`, `UTC` | Cron expression; times interpreted in `timezone` (IANA) |
 | `analysis` | `window_duration`, `comparison_offset` | `24h`, `168h` | Current vs baseline time windows |
 | `rules` | `slow_sql`, `regression`, `index_suggestion` | — | Alert thresholds |
