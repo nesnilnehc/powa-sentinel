@@ -65,7 +65,9 @@ dockers:
   - image_templates:
       - "ghcr.io/nesnilnehc/powa-sentinel:{{ .Tag }}"
       - "ghcr.io/nesnilnehc/powa-sentinel:latest"
-    dockerfile: Dockerfile
+    dockerfile: Dockerfile.goreleaser
+    extra_files:
+      - config/config.yaml.example
     build_flag_templates:
       - "--build-arg=VERSION={{.Version}}"
       - "--build-arg=COMMIT={{.ShortCommit}}"

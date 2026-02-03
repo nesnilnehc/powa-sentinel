@@ -1,0 +1,19 @@
+# GoReleaser-specific Dockerfile
+# This assumes the binary is already built by GoReleaser
+FROM gcr.io/distroless/static:nonroot
+
+# Copy the pre-built binary from GoReleaser context
+COPY powa-sentinel /powa-sentinel
+
+# Copy example config as default
+COPY config.yaml.example /config.yaml
+
+# Use non-root user
+USER nonroot:nonroot
+
+# Expose health check port
+EXPOSE 8080
+
+# Set entrypoint
+ENTRYPOINT ["/powa-sentinel"]
+CMD ["-config", "/config.yaml"]
