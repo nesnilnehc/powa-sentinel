@@ -91,7 +91,7 @@ permissions:
 # Environment variables
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: powa-team/powa-sentinel
+  IMAGE_NAME: nesnilnehc/powa-sentinel
 
 jobs:
   # ==========================================================================
@@ -120,7 +120,7 @@ jobs:
     # - github.event_name != 'pull_request': Allows main branch and tag pushes
     # - github.event.pull_request.head.repo.full_name == github.repository: 
     #   Allows PRs from main repo (not forks)
-    if: github.repository == 'powa-team/powa-sentinel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.repository == 'nesnilnehc/powa-sentinel' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     
     steps:
       # Security validation: Verify workflow permissions (Requirements 4.1, 4.3)
@@ -150,14 +150,14 @@ jobs:
           echo "- 🔄 Validating repository ownership..." >> $GITHUB_STEP_SUMMARY
           
           # Critical error handling: Verify repository ownership (Requirement 6.1)
-          if [[ "${{ github.repository_owner }}" != "powa-team" ]]; then
-            echo "❌ CRITICAL ERROR: Repository not owned by powa-team"
-            echo "::error title=Repository Ownership Error::Expected repository owner 'powa-team' but found '${{ github.repository_owner }}'. This workflow is only authorized for powa-team repositories."
+          if [[ "${{ github.repository_owner }}" != "nesnilnehc" ]]; then
+            echo "❌ CRITICAL ERROR: Repository not owned by nesnilnehc"
+            echo "::error title=Repository Ownership Error::Expected repository owner 'nesnilnehc' but found '${{ github.repository_owner }}'. This workflow is only authorized for nesnilnehc repositories."
             echo "## 🚨 Critical Error: Unauthorized Repository" >> $GITHUB_STEP_SUMMARY
             echo "**Error Type:** Repository Ownership Violation" >> $GITHUB_STEP_SUMMARY
-            echo "**Expected Owner:** powa-team" >> $GITHUB_STEP_SUMMARY
+            echo "**Expected Owner:** nesnilnehc" >> $GITHUB_STEP_SUMMARY
             echo "**Actual Owner:** ${{ github.repository_owner }}" >> $GITHUB_STEP_SUMMARY
-            echo "**Resolution:** This workflow can only run on powa-team repositories" >> $GITHUB_STEP_SUMMARY
+            echo "**Resolution:** This workflow can only run on nesnilnehc repositories" >> $GITHUB_STEP_SUMMARY
             exit 1
           else
             echo "- ✅ Repository ownership validated" >> $GITHUB_STEP_SUMMARY

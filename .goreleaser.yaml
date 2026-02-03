@@ -63,8 +63,8 @@ changelog:
 
 dockers:
   - image_templates:
-      - "ghcr.io/powa-team/powa-sentinel:{{ .Tag }}"
-      - "ghcr.io/powa-team/powa-sentinel:latest"
+      - "ghcr.io/nesnilnehc/powa-sentinel:{{ .Tag }}"
+      - "ghcr.io/nesnilnehc/powa-sentinel:latest"
     dockerfile: Dockerfile
     build_flag_templates:
       - "--build-arg=VERSION={{.Version}}"
@@ -73,7 +73,7 @@ dockers:
 
 release:
   github:
-    owner: powa-team
+    owner: nesnilnehc
     name: powa-sentinel
   draft: false
   prerelease: auto
