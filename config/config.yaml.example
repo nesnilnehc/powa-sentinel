@@ -11,6 +11,8 @@ schedule:
   # Format: "second minute hour day-of-month month day-of-week"
   # Default: Every Monday at 9:00 AM
   cron: "${SCHEDULE_CRON:-0 0 9 * * 1}"
+  # IANA timezone for cron (e.g. UTC, Asia/Shanghai). Cron times are interpreted in this zone.
+  timezone: "${SCHEDULE_TZ:-UTC}"
 
 analysis:
   # Time window for current metrics analysis

@@ -20,6 +20,7 @@ The canonical config template is [config/config.yaml.example](../../../config/co
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `cron` | string | `0 0 9 * * 1` | Cron expression (second minute hour day month dow) |
+| `timezone` | string | `UTC` | IANA timezone; cron times are interpreted in this zone (e.g. `Asia/Shanghai`) |
 
 ### analysis
 

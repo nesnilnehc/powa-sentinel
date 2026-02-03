@@ -7,7 +7,7 @@ powa-sentinel uses a YAML config file. All settings support environment variable
 | Section | Key | Default | Description |
 |---------|-----|---------|-------------|
 | `database` | `host`, `port`, `user`, `password`, `dbname`, `sslmode` | — | PoWA repository connection |
-| `schedule` | `cron` | `0 0 9 * * 1` | Cron expression (default: Monday 9:00) |
+| `schedule` | `cron`, `timezone` | `0 0 9 * * 1`, `UTC` | Cron expression; times interpreted in `timezone` (IANA) |
 | `analysis` | `window_duration`, `comparison_offset` | `24h`, `168h` | Current vs baseline time windows |
 | `rules` | `slow_sql`, `regression`, `index_suggestion` | — | Alert thresholds |
 | `notifier` | `type`, `webhook_url`, `retries` | `console` | Notification channel |
@@ -26,6 +26,7 @@ database:
 
 schedule:
   cron: "${SCHEDULE_CRON:-0 0 9 * * 1}"
+  timezone: "${SCHEDULE_TZ:-UTC}"
 
 analysis:
   window_duration: "${ANALYSIS_WINDOW:-24h}"
@@ -56,3 +57,15 @@ server:
 - **`wecom`**: Sends to WeCom webhook. Requires `webhook_url`.
 
 For full field reference, see [Config Specification](../reference/config-spec.md). For deployment options, see [Deployment](../guides/deployment.md).
+
+## Schedule and timezone
+
+Cron times are interpreted in the configured **`schedule.timezone`** (IANA name), independent of the container or system timezone. Default is `UTC`. Example for local time:
+
+```yaml
+schedule:
+  cron: "0 25 16 * * *"
+  timezone: "Asia/Shanghai"
+```
+
+Startup logs show `Scheduler started with cron: ... (timezone: ...)` for verification.

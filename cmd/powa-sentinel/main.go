@@ -119,13 +119,13 @@ func main() {
 		log.Fatalf("Failed to start health server: %v", err)
 	}
 
-	// Initialize scheduler
-	sched := scheduler.New(eng, notify)
+	// Initialize scheduler (cron interpreted in configured timezone; Location set by config.Validate)
+	sched := scheduler.New(eng, notify, cfg.Schedule.Location)
 	if err := sched.Schedule(cfg.Schedule.Cron); err != nil {
 		log.Fatalf("Failed to schedule job: %v", err)
 	}
 	sched.Start()
-	log.Printf("Scheduler started with cron: %s", cfg.Schedule.Cron)
+	log.Printf("Scheduler started with cron: %s (timezone: %s)", cfg.Schedule.Cron, cfg.Schedule.Timezone)
 
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)

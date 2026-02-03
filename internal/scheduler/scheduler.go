@@ -29,10 +29,14 @@ type Scheduler struct {
 	analyzing int32 // atomic flag to prevent concurrent analysis
 }
 
-// New creates a new Scheduler.
-func New(eng *engine.Engine, notify notifier.Notifier) *Scheduler {
+// New creates a new Scheduler. Cron expressions are interpreted in loc; use time.UTC or time.LoadLocation("Asia/Shanghai") etc.
+// If loc is nil, UTC is used.
+func New(eng *engine.Engine, notify notifier.Notifier, loc *time.Location) *Scheduler {
+	if loc == nil {
+		loc = time.UTC
+	}
 	return &Scheduler{
-		cron:            cron.New(cron.WithSeconds()),
+		cron:            cron.New(cron.WithSeconds(), cron.WithLocation(loc)),
 		engine:          eng,
 		notifier:        notify,
 		analysisTimeout: DefaultAnalysisTimeout,

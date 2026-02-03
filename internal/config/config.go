@@ -41,7 +41,9 @@ func (d *DatabaseConfig) DSN() string {
 
 // ScheduleConfig defines when analysis jobs run.
 type ScheduleConfig struct {
-	Cron string `yaml:"cron"`
+	Cron     string         `yaml:"cron"`
+	Timezone string         `yaml:"timezone"` // IANA name (e.g. UTC, Asia/Shanghai); cron is interpreted in this zone
+	Location *time.Location `yaml:"-"`        // set during Validate(); use this to avoid parsing timezone twice
 }
 
 // AnalysisConfig defines analysis time windows.
@@ -170,6 +172,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Schedule.Cron == "" {
 		cfg.Schedule.Cron = "0 0 9 * * 1" // Every Monday at 9:00 AM
 	}
+	if cfg.Schedule.Timezone == "" {
+		cfg.Schedule.Timezone = "UTC"
+	}
 
 	// Analysis defaults
 	if cfg.Analysis.WindowDuration == "" {
@@ -239,6 +244,13 @@ func (c *Config) Validate() error {
 	}
 	if _, err := c.Notifier.RetryDelayParsed(); err != nil {
 		errs = append(errs, fmt.Sprintf("notifier.retry_delay is invalid: %v", err))
+	}
+
+	// Validate schedule timezone and cache Location for use by scheduler (parse once)
+	if loc, err := time.LoadLocation(c.Schedule.Timezone); err != nil {
+		errs = append(errs, fmt.Sprintf("schedule.timezone %q is invalid: %v", c.Schedule.Timezone, err))
+	} else {
+		c.Schedule.Location = loc
 	}
 
 	// Validate rule values

@@ -20,6 +20,7 @@
 | 键 | 类型 | 默认值 | 说明 |
 |----|------|--------|------|
 | `cron` | string | `0 0 9 * * 1` | Cron 表达式（秒 分 时 日 月 周） |
+| `timezone` | string | `UTC` | IANA 时区；cron 时间按此时区解析（如 `Asia/Shanghai`） |
 
 ### analysis
 
