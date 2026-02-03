@@ -71,7 +71,7 @@ v
 
 ```bash
 # 创建 config.yaml（见文档），然后：
-docker run -d -p 8080:8080 -v $(pwd)/config.yaml:/config.yaml ghcr.io/nesnilnehc/powa-sentinel:latest
+docker run -d --restart unless-stopped -p 8080:8080 -v $(pwd)/config.yaml:/config.yaml ghcr.io/nesnilnehc/powa-sentinel:latest
 curl http://localhost:8080/healthz
 ```
 

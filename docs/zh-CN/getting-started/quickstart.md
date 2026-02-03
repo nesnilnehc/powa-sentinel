@@ -40,6 +40,7 @@ notifier:
 ```bash
 docker run -d \
   --name powa-sentinel \
+  --restart unless-stopped \
   -p 8080:8080 \
   -v $(pwd)/config.yaml:/config.yaml \
   ghcr.io/nesnilnehc/powa-sentinel:latest
