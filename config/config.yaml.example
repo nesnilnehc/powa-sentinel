@@ -5,6 +5,9 @@ database:
   password: "${DB_PASSWORD}"
   dbname: "${DB_NAME:-powa}"
   sslmode: "${DB_SSLMODE:-disable}"
+  # Optional: list of extensions you expect to be available. If any are missing, a warning is logged at extension check (environment expectation check).
+  # Allowed values: pg_stat_kcache, pg_qualstats. Leave empty or omit to skip comparison.
+  # expected_extensions: [pg_stat_kcache, pg_qualstats]
 
 schedule:
   # Cron expression for analysis schedule

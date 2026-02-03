@@ -106,6 +106,39 @@ func TestReader_checkExtensions_PoWA4_KcacheInPowaSchema(t *testing.T) {
 	}
 }
 
+func TestReader_checkExtensions_ExpectedExtensionsMismatch(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	defer db.Close()
+
+	r := &Reader{
+		db:  db,
+		cfg: &config.DatabaseConfig{ExpectedExtensions: []string{"pg_qualstats"}},
+	}
+
+	mock.ExpectQuery("SHOW server_version_num").
+		WillReturnRows(sqlmock.NewRows([]string{"server_version_num"}).AddRow("140000"))
+	mock.ExpectQuery("SELECT extversion FROM pg_extension WHERE extname = 'powa'").
+		WillReturnRows(sqlmock.NewRows([]string{"extversion"}).AddRow("3.2.0"))
+	mock.ExpectQuery("SELECT EXISTS.*pg_stat_kcache").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery("SELECT EXISTS.*pg_qualstats").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	if err := r.checkExtensions(context.Background()); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+	// pg_qualstats was expected but not available; Environment check log is emitted (not asserted here)
+	if r.HasQualStats() {
+		t.Error("expected HasQualStats to be false")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
 func TestReader_GetMetrics(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

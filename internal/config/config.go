@@ -23,12 +23,13 @@ type Config struct {
 
 // DatabaseConfig holds PostgreSQL connection settings.
 type DatabaseConfig struct {
-	Host     string `yaml:"host"`
-	Port     int    `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
-	DBName   string `yaml:"dbname"`
-	SSLMode  string `yaml:"sslmode"`
+	Host               string   `yaml:"host"`
+	Port               int      `yaml:"port"`
+	User               string   `yaml:"user"`
+	Password           string   `yaml:"password"`
+	DBName             string   `yaml:"dbname"`
+	SSLMode            string   `yaml:"sslmode"`
+	ExpectedExtensions []string `yaml:"expected_extensions"` // optional: compare with actual and log mismatches (env expectation check)
 }
 
 // DSN returns the PostgreSQL connection string.
@@ -222,6 +223,14 @@ func (c *Config) Validate() error {
 	// Validate database
 	if c.Database.Host == "" {
 		errs = append(errs, "database.host is required")
+	}
+	validExpectedExtensions := map[string]bool{"pg_stat_kcache": true, "pg_qualstats": true}
+	seenInvalid := make(map[string]bool)
+	for _, ext := range c.Database.ExpectedExtensions {
+		if !validExpectedExtensions[ext] && !seenInvalid[ext] {
+			seenInvalid[ext] = true
+			errs = append(errs, fmt.Sprintf("database.expected_extensions: %q is not allowed; use pg_stat_kcache and/or pg_qualstats", ext))
+		}
 	}
 
 	// Validate notifier type

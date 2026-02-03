@@ -14,6 +14,7 @@
 | `password` | string | — | 必填 |
 | `dbname` | string | `powa` | 数据库名 |
 | `sslmode` | string | `disable` | SSL 模式 |
+| `expected_extensions` | string 列表 | *（空）* | 可选。期望可用的扩展（`pg_stat_kcache`、`pg_qualstats`）。若有缺失，扩展检查时会打出一条告警日志（环境期望校验）。不配置或留空则不进行对比。 |
 
 ### schedule
 

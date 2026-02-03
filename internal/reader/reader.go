@@ -141,6 +141,28 @@ func (r *Reader) checkExtensions(ctx context.Context) error {
 		}
 
 		log.Printf("Extension check: pg_stat_kcache=%v (table=%s), pg_qualstats=%v, powa_version=%s", r.hasKCache, r.kcacheTable, r.hasQualStats, r.powaVersion)
+
+		// Optional environment expectation check: compare expected_extensions with actual availability
+		if len(r.cfg.ExpectedExtensions) > 0 {
+			actual := make(map[string]bool)
+			if r.hasKCache {
+				actual["pg_stat_kcache"] = true
+			}
+			if r.hasQualStats {
+				actual["pg_qualstats"] = true
+			}
+			seenMissing := make(map[string]bool)
+			var missing []string
+			for _, ext := range r.cfg.ExpectedExtensions {
+				if !actual[ext] && !seenMissing[ext] {
+					seenMissing[ext] = true
+					missing = append(missing, ext)
+				}
+			}
+			if len(missing) > 0 {
+				log.Printf("Environment check: expected extensions %v; missing: %v", r.cfg.ExpectedExtensions, missing)
+			}
+		}
 	})
 
 	return r.extensionsErr

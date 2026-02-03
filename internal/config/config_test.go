@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -214,6 +215,36 @@ func TestConfig_Validate(t *testing.T) {
 			},
 			wantErr: true,
 		},
+		{
+			name: "valid expected_extensions",
+			cfg: Config{
+				Database: DatabaseConfig{Host: "localhost", Port: 5432, ExpectedExtensions: []string{"pg_stat_kcache", "pg_qualstats"}},
+				Analysis: AnalysisConfig{WindowDuration: "24h", ComparisonOffset: "168h"},
+				Rules:    RulesConfig{SlowSQL: SlowSQLRuleConfig{TopN: 10, RankBy: "total_time"}},
+				Notifier: NotifierConfig{Type: "console", RetryDelay: "1s"},
+			},
+			wantErr: false,
+		},
+		{
+			name: "invalid expected_extensions",
+			cfg: Config{
+				Database: DatabaseConfig{Host: "localhost", Port: 5432, ExpectedExtensions: []string{"powa", "pg_qualstats"}},
+				Analysis: AnalysisConfig{WindowDuration: "24h", ComparisonOffset: "168h"},
+				Rules:    RulesConfig{SlowSQL: SlowSQLRuleConfig{TopN: 10, RankBy: "total_time"}},
+				Notifier: NotifierConfig{Type: "console", RetryDelay: "1s"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "invalid expected_extensions deduplicated",
+			cfg: Config{
+				Database: DatabaseConfig{Host: "localhost", Port: 5432, ExpectedExtensions: []string{"powa", "powa", "other"}},
+				Analysis: AnalysisConfig{WindowDuration: "24h", ComparisonOffset: "168h"},
+				Rules:    RulesConfig{SlowSQL: SlowSQLRuleConfig{TopN: 10, RankBy: "total_time"}},
+				Notifier: NotifierConfig{Type: "console", RetryDelay: "1s"},
+			},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -223,6 +254,27 @@ func TestConfig_Validate(t *testing.T) {
 				t.Errorf("Config.Validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestConfig_Validate_ExpectedExtensions_Deduplicated(t *testing.T) {
+	cfg := Config{
+		Database: DatabaseConfig{Host: "localhost", Port: 5432, ExpectedExtensions: []string{"powa", "powa", "other"}},
+		Analysis: AnalysisConfig{WindowDuration: "24h", ComparisonOffset: "168h"},
+		Rules:    RulesConfig{SlowSQL: SlowSQLRuleConfig{TopN: 10, RankBy: "total_time"}},
+		Notifier: NotifierConfig{Type: "console", RetryDelay: "1s"},
+	}
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("Validate() expected error for invalid expected_extensions")
+	}
+	msg := err.Error()
+	// Each invalid extension should be reported only once (powa once, other once)
+	if strings.Count(msg, `"powa"`) != 1 {
+		t.Errorf("expected exactly one error line for powa, got %d mentions in: %s", strings.Count(msg, `"powa"`), msg)
+	}
+	if strings.Count(msg, `"other"`) != 1 {
+		t.Errorf("expected exactly one error line for other, got %d mentions in: %s", strings.Count(msg, `"other"`), msg)
 	}
 }
 

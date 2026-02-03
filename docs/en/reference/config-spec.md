@@ -14,6 +14,7 @@ The canonical config template is [config/config.yaml.example](../../../config/co
 | `password` | string | — | Required |
 | `dbname` | string | `powa` | Database name |
 | `sslmode` | string | `disable` | SSL mode |
+| `expected_extensions` | list of string | *(empty)* | Optional. Extensions you expect to be available (`pg_stat_kcache`, `pg_qualstats`). If any are missing, a warning is logged at extension check (environment expectation check). Omit or leave empty to skip comparison. |
 
 ### schedule
 

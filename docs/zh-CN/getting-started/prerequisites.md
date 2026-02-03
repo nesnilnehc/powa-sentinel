@@ -39,6 +39,10 @@ SELECT powa_qualstats_register(); -- pg_qualstats
 
 未注册时，archivist 不会创建对应历史表/视图，会出现“禁用 kcache 增强”“跳过索引建议”等告警。
 
+## 环境期望校验（可选）
+
+若希望在某扩展未就绪时得到提示（例如打算使用 kcache/qualstats 但未安装或未注册），可在配置中设置 `database.expected_extensions`，例如 `[pg_stat_kcache, pg_qualstats]`。首次扩展检查时 Sentinel 会与当前实际可用扩展对比，并打出类似日志：`Environment check: expected extensions [pg_stat_kcache pg_qualstats]; missing: [pg_qualstats]`。不配置或留空则不进行对比。参见 [配置规范](../reference/config-spec.md#database)。
+
 ## 通知凭证
 
 - **企业微信**：从企业微信群或应用获取 Webhook URL。

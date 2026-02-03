@@ -39,6 +39,10 @@ SELECT powa_qualstats_register(); -- for pg_qualstats
 
 Without registration, the archivist will not create the history tables/views and you will see warnings (kcache enrichment disabled, index suggestions skipped).
 
+## Environment expectation check (optional)
+
+If you want to be warned when an extension you expect is not available (e.g. you intend to use kcache/qualstats but forgot to install or register), set `database.expected_extensions` in your config to a list such as `[pg_stat_kcache, pg_qualstats]`. On the first extension check, Sentinel will compare this list with what is actually available and log a message like: `Environment check: expected extensions [pg_stat_kcache pg_qualstats]; missing: [pg_qualstats]`. Leave the option unset or empty to skip this check. See [Config Specification](../reference/config-spec.md#database).
+
 ## Notification Credentials
 
 - **WeCom (WeChat Work)**: Webhook URL from your WeCom group or app.
