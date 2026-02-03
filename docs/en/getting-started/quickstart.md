@@ -40,6 +40,7 @@ Replace `database` credentials with your PoWA repository connection. Use `consol
 ```bash
 docker run -d \
   --name powa-sentinel \
+  -p 8080:8080 \
   -v $(pwd)/config.yaml:/config.yaml \
   ghcr.io/nesnilnehc/powa-sentinel:latest
 ```
@@ -50,6 +51,8 @@ Or with Docker Compose:
 services:
   powa-sentinel:
     image: ghcr.io/nesnilnehc/powa-sentinel:latest
+    ports:
+      - "8080:8080"
     volumes:
       - ./config.yaml:/config.yaml
     restart: unless-stopped

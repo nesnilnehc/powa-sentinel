@@ -74,7 +74,7 @@ See [docs/README.md](./docs/README.md) for the full index.
 
 ```bash
 # Create config.yaml (see docs), then:
-docker run -d -v $(pwd)/config.yaml:/config.yaml ghcr.io/nesnilnehc/powa-sentinel:latest
+docker run -d -p 8080:8080 -v $(pwd)/config.yaml:/config.yaml ghcr.io/nesnilnehc/powa-sentinel:latest
 curl http://localhost:8080/healthz
 ```
 
