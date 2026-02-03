@@ -55,3 +55,19 @@ Workflow 失败？
 - 添加密钥：`ACTIONS_STEP_DEBUG=true`、`ACTIONS_RUNNER_DEBUG=true`
 - 本地测试：[act](https://github.com/nektos/act)
 - 语法检查：`actionlint .github/workflows/*.yml`
+
+## PoWA 仓库相关日志告警
+
+若出现以下告警：
+
+- **「pg_stat_kcache extension present but no history table found in PoWA 4」**  
+  未找到 kcache 历史表。请确认安装 `pg_stat_kcache` 后已执行 `SELECT powa_kcache_register();`，且 powa-archivist 已创建对应表（通常在 `powa` schema）。Sentinel 会在 `public` 与 `powa` schema 下查找形如 `powa_%kcache%history` 的表。
+
+- **「powa_qualstats_indexes view does not exist, skipping index suggestions」**  
+  qualstats 未完整接入。请在 PoWA 数据库上以超级用户执行 `SELECT powa_qualstats_register();`，以便 PoWA 创建所需视图。若为自定义 PoWA 部署，请确保该视图存在且只读用户具备 `SELECT` 权限。
+
+上述告警不会中断分析，慢查询与回归检测仍会执行，仅会跳过基于 kcache 的增强与索引建议。
+
+### 「undefined_table」或「undefined_column」错误
+
+若仓库数据库返回未定义表或未定义列错误（例如在查询 `powa_statements_history` 或其他 PoWA 对象时），请确认你的 **PoWA（powa-archivist）版本**在[兼容性说明](../reference/compatibility.md)的支持矩阵内。不支持的版本或版本不匹配会使用不同 schema 并导致此类错误。请确保连接使用的 `search_path` 包含 PoWA 创建视图所在的 schema（通常为 `powa` 或 `public`）。

@@ -59,3 +59,7 @@ Historical aggregated stats for trends and regression.
 - **pg_stat_kcache**: CPU/IO-based slow query analysis
 - **pg_qualstats**: Missing index suggestions (passive read)
 - **pg_wait_sampling**: Future support for lock-related alerts
+
+## See also
+
+- [PoWA Version Compatibility](compatibility.md) — supported PoWA versions (3.x, 4.x; 5.x best-effort) and per-version notes

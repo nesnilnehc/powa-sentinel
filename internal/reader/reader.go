@@ -110,17 +110,17 @@ func (r *Reader) checkExtensions(ctx context.Context) error {
 
 		// If PoWA 4+ and kcache is enabled, try to find the correct history table
 		if r.hasKCache && r.isPoWA4() {
-			// Search for a table matching powa_%kcache%history (e.g. powa_kcache_history or powa_kcache_metrics_history)
-			// We prefer 'powa_kcache_history' if both exist, so we order by name length
-			var tableName string
+			// Search for a table matching powa_%kcache%history in both public and powa schemas
+			// (PoWA archivist typically creates tables in the powa schema)
+			var schemaName, tableName string
 			err := r.db.QueryRowContext(ctx, `
-				SELECT tablename 
+				SELECT schemaname, tablename 
 				FROM pg_tables 
-				WHERE schemaname = 'public' 
+				WHERE schemaname IN ('public', 'powa') 
 				AND tablename LIKE 'powa_%kcache%history'
 				ORDER BY length(tablename) ASC 
 				LIMIT 1
-			`).Scan(&tableName)
+			`).Scan(&schemaName, &tableName)
 
 			if err != nil {
 				if err == sql.ErrNoRows {
@@ -132,8 +132,8 @@ func (r *Reader) checkExtensions(ctx context.Context) error {
 					r.hasKCache = false
 				}
 			} else {
-				r.kcacheTable = tableName
-				log.Printf("Detected PoWA 4 kcache table: %s", tableName)
+				r.kcacheTable = schemaName + "." + tableName
+				log.Printf("Detected PoWA 4 kcache table: %s", r.kcacheTable)
 			}
 		} else if r.hasKCache && !r.isPoWA4() {
 			// Default for PoWA 3

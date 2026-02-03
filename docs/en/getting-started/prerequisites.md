@@ -30,7 +30,14 @@ Never grant write or DDL privileges. powa-sentinel only reads aggregated views.
 | `pg_stat_kcache` | CPU/IO-based slow query detection |
 | `pg_qualstats` | Missing index suggestions |
 
-Install these on the PoWA repository database if you want richer alerts.
+Install these on the PoWA repository database if you want richer alerts. After installing each extension, **register it with PoWA** (as superuser on the PoWA database):
+
+```sql
+SELECT powa_kcache_register();   -- for pg_stat_kcache
+SELECT powa_qualstats_register(); -- for pg_qualstats
+```
+
+Without registration, the archivist will not create the history tables/views and you will see warnings (kcache enrichment disabled, index suggestions skipped).
 
 ## Notification Credentials
 

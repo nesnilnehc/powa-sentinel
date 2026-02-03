@@ -59,3 +59,7 @@ PoWA 是 PostgreSQL 工作负载分析器。powa-sentinel 作为 sidecar：查�
 - **pg_stat_kcache**：基于 CPU/IO 的慢查询分析
 - **pg_qualstats**：缺失索引建议（只读）
 - **pg_wait_sampling**：后续支持锁相关告警
+
+## 相关文档
+
+- [PoWA 版本兼容性](compatibility.md) — 支持的 PoWA 版本（3.x、4.x；5.x 最佳-effort）及各版本说明

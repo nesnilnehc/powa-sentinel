@@ -37,16 +37,15 @@ func TestReader_checkExtensions(t *testing.T) {
 	mock.ExpectQuery("SELECT EXISTS.*pg_qualstats").
 		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
-	// Expect KCache table search (PoWA 3.2.0 is detected, but logic runs if hasKCache is true. 
+	// Expect KCache table search (PoWA 3.2.0 is detected, but logic runs if hasKCache is true.
 	// Wait, isPoWA4() returns false for 3.2.0. So table search is SKIPPED.
-	// So NO new query expectation needed for PoWA 3 test case in checkExtensions 
+	// So NO new query expectation needed for PoWA 3 test case in checkExtensions
 	// UNLESS we change the mock version to 4.x.
-	// The current mock uses "3.2.0". 
+	// The current mock uses "3.2.0".
 	// My code: if r.hasKCache && r.isPoWA4() { search }
 	// So for "3.2.0", it skips search.
 	// And sets r.kcacheTable = "powa_kcache_metrics_history" (else block).
 	// So NO NEW MOCK needed here.
-
 
 	if err := r.checkExtensions(context.Background()); err != nil {
 		t.Errorf("unexpected error: %v", err)
@@ -60,6 +59,48 @@ func TestReader_checkExtensions(t *testing.T) {
 	}
 
 	// Verify expectations
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("there were unfulfilled expectations: %s", err)
+	}
+}
+
+func TestReader_checkExtensions_PoWA4_KcacheInPowaSchema(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("an error '%s' was not expected when opening a stub database connection", err)
+	}
+	defer db.Close()
+
+	r := &Reader{
+		db:  db,
+		cfg: &config.DatabaseConfig{},
+	}
+
+	mock.ExpectQuery("SHOW server_version_num").
+		WillReturnRows(sqlmock.NewRows([]string{"server_version_num"}).AddRow("140000"))
+	mock.ExpectQuery("SELECT extversion FROM pg_extension WHERE extname = 'powa'").
+		WillReturnRows(sqlmock.NewRows([]string{"extversion"}).AddRow("4.2.2"))
+	mock.ExpectQuery("SELECT EXISTS.*pg_stat_kcache").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectQuery("SELECT EXISTS.*pg_qualstats").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	// PoWA 4 + kcache: search pg_tables for kcache history in public/powa
+	mock.ExpectQuery("SELECT schemaname, tablename").
+		WillReturnRows(sqlmock.NewRows([]string{"schemaname", "tablename"}).AddRow("powa", "powa_kcache_history"))
+
+	if err := r.checkExtensions(context.Background()); err != nil {
+		t.Errorf("unexpected error: %v", err)
+	}
+
+	if !r.HasKCache() {
+		t.Error("expected HasKCache to be true")
+	}
+	// Discovered table must be schema-qualified so queries work regardless of search_path
+	if r.kcacheTable != "powa.powa_kcache_history" {
+		t.Errorf("expected kcacheTable %q, got %q", "powa.powa_kcache_history", r.kcacheTable)
+	}
+
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("there were unfulfilled expectations: %s", err)
 	}

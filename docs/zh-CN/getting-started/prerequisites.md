@@ -30,7 +30,14 @@ GRANT SELECT ON ALL TABLES IN SCHEMA powa TO powa_readonly;
 | `pg_stat_kcache` | 基于 CPU/IO 的慢查询检测 |
 | `pg_qualstats` | 缺失索引建议 |
 
-如需更丰富的告警，可在 PoWA 仓库数据库上安装上述扩展。
+如需更丰富的告警，可在 PoWA 仓库数据库上安装上述扩展。安装后请在 PoWA 所在库以**超级用户**执行**注册**：
+
+```sql
+SELECT powa_kcache_register();   -- pg_stat_kcache
+SELECT powa_qualstats_register(); -- pg_qualstats
+```
+
+未注册时，archivist 不会创建对应历史表/视图，会出现“禁用 kcache 增强”“跳过索引建议”等告警。
 
 ## 通知凭证
 
