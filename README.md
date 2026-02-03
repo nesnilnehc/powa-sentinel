@@ -64,23 +64,19 @@ Notification Channels (WeCom, Webhook, Email…)
 
 ## Documentation
 
-- [Product Requirements](./docs/en/product/requirements.md)
-- [Architecture & Design](./docs/en/dev/design.md)
-- [PoWA Reference](./docs/en/dev/powa_reference.md)
-- [Deployment Guide](./docs/en/ops/deployment.md)
+See [docs/README.md](./docs/README.md) for the full index.
 
-## Getting Started
+**Quick links:** [Quick Start](./docs/en/getting-started/quickstart.md) | [Deployment](./docs/en/guides/deployment.md) | [Contributing](./docs/en/guides/contributing.md)
 
-> ⚠️ This project assumes an existing PoWA installation.
+## Quick Start
 
-### Requirements
+> ⚠️ Requires an existing PoWA installation. See [Prerequisites](./docs/en/getting-started/prerequisites.md).
 
-- PostgreSQL with PoWA installed
-- Read-only database user with access to PoWA schemas
-- **Recommended Extensions** (on PoWA repository):
-  - `pg_stat_kcache`: For CPU/IO-based slow SQL detection.
-  - `pg_qualstats`: For missing index suggestions.
-- WeCom webhook or application credentials
+```bash
+# Create config.yaml (see docs), then:
+docker run -d -v $(pwd)/config.yaml:/config.yaml ghcr.io/nesnilnehc/powa-sentinel:latest
+curl http://localhost:8080/healthz
+```
 
 ---
 

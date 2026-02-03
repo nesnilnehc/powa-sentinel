@@ -1,27 +1,29 @@
 # 文档
 
-[English](./README.md) | [← 返回项目主页](../README_zh-CN.md)
+[English](./README.md) | [← 返回项目](../README.md)
 
-欢迎阅读 PoWA Sentinel 文档。请根据您的角色选择相关部分。
+## 快速开始
 
-## 📚 产品与相关方
+- [快速开始](zh-CN/getting-started/quickstart.md)
+- [前置条件](zh-CN/getting-started/prerequisites.md)
+- [配置](zh-CN/getting-started/configuration.md)
 
-* **[产品需求](zh-CN/product/requirements.md)**
-  * 背景与目标
-  * 用户故事
-  * 功能需求
+## 指南
 
-## 🛠 开发者
+- [部署](zh-CN/guides/deployment.md)
+- [贡献](zh-CN/guides/contributing.md)
 
-* **[架构与设计](zh-CN/dev/design.md)**
-  * 系统架构
-  * 数据模型
-  * 组件逻辑
-* **[PoWA 参考](zh-CN/dev/powa_reference.md)**
+## 参考
 
-## ⚙️ 运维
+- [架构](zh-CN/reference/architecture.md)
+- [PoWA Schema](zh-CN/reference/powa-schema.md)
+- [配置规范](zh-CN/reference/config-spec.md)
 
-* **[部署指南](zh-CN/ops/deployment.md)**
-  * 构建与测试
-  * 分发 (Docker)
-  * 部署 (K8s, Systemd)
+## 运维
+
+- [发布流程](zh-CN/operations/release-workflow.md)
+- [故障排查](zh-CN/operations/troubleshooting.md)
+
+## 项目
+
+- [目标与需求](zh-CN/project/goals.md)

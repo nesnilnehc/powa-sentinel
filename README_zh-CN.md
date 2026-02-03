@@ -61,23 +61,19 @@ v
 
 ## 文档
 
-- [产品需求](./docs/zh-CN/product/requirements.md)
-- [架构与设计](./docs/zh-CN/dev/design.md)
-- [PoWA 参考](./docs/zh-CN/dev/powa_reference.md)
-- [部署指南](./docs/zh-CN/ops/deployment.md)
+完整索引见 [docs/README_zh-CN.md](./docs/README_zh-CN.md)。
+
+**快速链接**：[快速开始](./docs/zh-CN/getting-started/quickstart.md) | [部署](./docs/zh-CN/guides/deployment.md) | [贡献](./docs/zh-CN/guides/contributing.md)
 
 ## 快速开始
 
-> ⚠️ 本项目假设已存在 PoWA 安装环境。
+> ⚠️ 需已安装 PoWA。详见 [前置条件](./docs/zh-CN/getting-started/prerequisites.md)。
 
-### 要求
-
-- 已安装 PoWA 的 PostgreSQL
-- 具有访问 PoWA 模式权限的只读数据库用户
-- **推荐扩展**（在 PoWA 仓库上）：
-  - `pg_stat_kcache`: 用于基于 CPU/IO 的慢 SQL 检测。
-  - `pg_qualstats`: 用于缺失索引建议。
-- 企业微信 Webhook 或应用凭证
+```bash
+# 创建 config.yaml（见文档），然后：
+docker run -d -v $(pwd)/config.yaml:/config.yaml ghcr.io/nesnilnehc/powa-sentinel:latest
+curl http://localhost:8080/healthz
+```
 
 ---
 

@@ -1,27 +1,29 @@
 # Documentation
 
-[中文文档](./README_zh-CN.md) | [← Back to Project Home](../README.md)
+[中文](./README_zh-CN.md) | [← Back to Project](../README.md)
 
-Welcome to the PoWA Sentinel documentation. Please select the section relevant to your role.
+## Getting Started
 
-## 📚 For Product & Stakeholders
+- [Quick Start](en/getting-started/quickstart.md)
+- [Prerequisites](en/getting-started/prerequisites.md)
+- [Configuration](en/getting-started/configuration.md)
 
-* **[Product Requirements](en/product/requirements.md)**
-  * Background & Goals
-  * User Stories
-  * Functional Requirements
+## Guides
 
-## 🛠 For Developers
+- [Deployment](en/guides/deployment.md)
+- [Contributing](en/guides/contributing.md)
 
-* **[Architecture & Design](en/dev/design.md)**
-  * System Architecture
-  * Data Models
-  * Component Logic
-* **[PoWA Reference](en/dev/powa_reference.md)**
+## Reference
 
-## ⚙️ For Operations
+- [Architecture](en/reference/architecture.md)
+- [PoWA Schema](en/reference/powa-schema.md)
+- [Config Specification](en/reference/config-spec.md)
 
-* **[Deployment Guide](en/ops/deployment.md)**
-  * Build & Test
-  * Distribution (Docker)
-  * Deployment (K8s, Systemd)
+## Operations
+
+- [Release Workflow](en/operations/release-workflow.md)
+- [Troubleshooting](en/operations/troubleshooting.md)
+
+## Project
+
+- [Goals & Requirements](en/project/goals.md)
