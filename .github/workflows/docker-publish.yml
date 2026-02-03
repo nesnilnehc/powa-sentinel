@@ -979,18 +979,9 @@ jobs:
           fi
           
           echo "🔍 Inspecting metadata for: $FIRST_TAG"
-          
-          # Extract image configuration and labels
-          IMAGE_CONFIG=$(docker manifest inspect "$FIRST_TAG" | jq -r '.config.digest')
-          if [[ "$IMAGE_CONFIG" == "null" || -z "$IMAGE_CONFIG" ]]; then
-            echo "❌ CRITICAL ERROR: Unable to extract image configuration"
-            echo "::error title=Metadata Extraction Failed::Cannot extract image configuration for metadata validation"
-            exit 1
-          fi
-          
-          # Use docker inspect to get image labels (requires pulling the image)
-          echo "📥 Pulling image for metadata inspection..."
-          if ! docker pull "$FIRST_TAG" > /dev/null 2>&1; then
+          # Multi-arch images have manifest list (no .config.digest); pull single platform for inspection
+          echo "📥 Pulling image for metadata inspection (linux/amd64)..."
+          if ! docker pull --platform linux/amd64 "$FIRST_TAG" > /dev/null 2>&1; then
             echo "❌ CRITICAL ERROR: Failed to pull image for metadata inspection"
             echo "::error title=Image Pull Failed::Cannot pull image for metadata validation"
             exit 1
