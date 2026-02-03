@@ -6,7 +6,7 @@ FROM gcr.io/distroless/static:nonroot
 COPY powa-sentinel /powa-sentinel
 
 # Copy example config as default
-COPY config.yaml.example /config.yaml
+COPY config/config.yaml.example /config.yaml
 
 # Use non-root user
 USER nonroot:nonroot
