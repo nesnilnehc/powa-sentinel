@@ -285,15 +285,6 @@ func truncateQuery(query string, maxLen int) string {
 	return query[:maxLen-3] + "..."
 }
 
-// truncateMessage truncates the final markdown message to fit WeCom limits.
-func truncateMessage(msg string, maxLen int) string {
-	if len(msg) <= maxLen {
-		return msg
-	}
-	truncMsg := "\n\n...(message truncated due to size limit)"
-	return msg[:maxLen-len(truncMsg)] + truncMsg
-}
-
 // splitMessage splits the markdown message into chunks that fit within WeCom limits.
 func splitMessage(msg string, maxLen int) []string {
 	// Account for the suffix overhead: "\n\n*(Part X/Y)*" which is roughly 20 bytes.

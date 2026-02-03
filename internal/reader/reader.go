@@ -329,7 +329,7 @@ func (r *Reader) enrichWithKCache(ctx context.Context, snapshots []model.MetricS
 	rows, err := r.db.QueryContext(ctx, query, startTime, endTime)
 	if err != nil {
 		// Don't fail the whole analysis if kcache enrichment fails
-		fmt.Printf("Warning: failed to enrich with kcache data: %v\n", err)
+		log.Printf("Warning: failed to enrich with kcache data: %v", err)
 		return nil
 	}
 	defer rows.Close()

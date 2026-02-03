@@ -119,4 +119,4 @@ release:
 	@echo "Tag created. Next steps:"
 	@echo "  1. Push tag:    git push origin $(RELEASE_VERSION)"
 	@echo "  2. (Optional) Create GitHub Release and/or run: goreleaser release --clean"
-	@echo "  See docs/github-actions-goreleaser-coordination.md for details."
+	@echo "  See docs/en/operations/release-workflow.md (en) or docs/zh-CN/operations/release-workflow.md (zh-CN) for details."
