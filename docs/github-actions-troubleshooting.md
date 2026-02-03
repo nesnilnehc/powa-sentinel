@@ -54,6 +54,32 @@ Error: buildx failed with: error: failed to solve: failed to authorize: failed t
    - Ensure workflow runs on main repository: `powa-team/powa-sentinel`
    - Forks cannot publish to the main repository's registry
 
+#### Error: "Registry authentication failed after retry"
+
+**Symptoms:**
+```
+Error: Registry authentication failed after retry. Check permissions and registry status.
+```
+
+**Causes:**
+- Repository "Workflow permissions" set to read-only (restricts GITHUB_TOKEN)
+- GITHUB_TOKEN lacks `packages: write` scope
+
+**Solutions:**
+
+1. **Set Workflow permissions to read-write** (recommended)
+   - Go to **Settings → Actions → General**
+   - Under "Workflow permissions", select **"Read and write permissions"**
+   - Save
+
+2. **Use Personal Access Token (PAT) as fallback**
+   - Create a PAT at https://github.com/settings/tokens with `write:packages` scope
+   - Add secret `GHCR_TOKEN` in **Settings → Secrets and variables → Actions**
+   - The workflow will use `GHCR_TOKEN` when set, otherwise `GITHUB_TOKEN`
+
+3. **Verify job permissions**
+   - Ensure the workflow has `packages: write` in the permissions block
+
 #### Error: "GITHUB_TOKEN not available"
 
 **Symptoms:**

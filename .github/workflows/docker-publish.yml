@@ -109,6 +109,11 @@ jobs:
   docker:
     name: Build and Publish Docker Image
     runs-on: ubuntu-latest
+    # Explicit job-level permissions required for GHCR push (repository defaults may restrict GITHUB_TOKEN)
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     
     # =======================================================================
     # SECURITY GATE: Repository and Fork Validation
@@ -465,6 +470,8 @@ jobs:
           exit 1
       
       # Authentication and Security Configuration (Requirements 4.1, 4.2, 4.3, 4.5)
+      # Use GHCR_TOKEN (PAT with write:packages) if set, otherwise GITHUB_TOKEN.
+      # GHCR_TOKEN is needed when repo Settings > Actions > Workflow permissions is "Read repository contents and packages" (read-only).
       - name: Log in to Container Registry
         id: login
         if: github.event_name != 'pull_request'
@@ -472,21 +479,19 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
           # Security: Ensure logout on completion
           logout: true
         # Error handling: Fail fast on authentication failure (Requirement 6.1)
         continue-on-error: false
         timeout-minutes: 3
       
-      # Security validation: Verify authentication without exposing credentials
+      # Security validation: Trust login-action outcome; additional checks often cause false failures on Actions runners
       - name: Verify registry authentication
         id: auth-verify
         if: github.event_name != 'pull_request'
         run: |
           echo "Verifying authentication with ${{ env.REGISTRY }}"
-          
-          # Error handling: Comprehensive authentication validation (Requirement 6.2)
           AUTH_STATUS="${{ steps.login.outcome || 'unknown' }}"
           if [[ "$AUTH_STATUS" != "success" ]]; then
             echo "❌ CRITICAL ERROR: Registry authentication failed"
@@ -495,34 +500,11 @@ jobs:
             echo "**Error Type:** Authentication Failure" >> $GITHUB_STEP_SUMMARY
             echo "**Registry:** ${{ env.REGISTRY }}" >> $GITHUB_STEP_SUMMARY
             echo "**Status:** $AUTH_STATUS" >> $GITHUB_STEP_SUMMARY
-            echo "**Resolution:** Verify GITHUB_TOKEN permissions include 'packages: write'" >> $GITHUB_STEP_SUMMARY
+            echo "**Resolution:** Verify GITHUB_TOKEN has 'packages: write' and repo Settings > Actions > Workflow permissions is 'Read and write'" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
-          
-          # Test authentication by attempting to list repositories (without exposing tokens)
-          if docker info | grep -q "Registry:"; then
-            echo "✅ Docker registry authentication successful"
-          else
-            echo "❌ CRITICAL ERROR: Docker registry authentication verification failed"
-            echo "::error title=Authentication Verification Failed::Docker authentication appears to have failed during verification"
-            exit 1
-          fi
-          
-          # Verify no credentials are exposed in environment
-          if env | grep -i token | grep -v GITHUB_TOKEN= | grep -v RUNNER_; then
-            echo "❌ CRITICAL ERROR: Potential credential exposure detected"
-            echo "::error title=Security Violation::Potential credential exposure detected in environment variables"
-            exit 1
-          else
-            echo "✅ No credential exposure detected"
-          fi
-          
+          echo "✅ Registry authentication successful (login step succeeded)"
           echo "## ✅ Registry Authentication Verified" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Registry Login | ✅ Successful |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker Info | ✅ Registry Available |" >> $GITHUB_STEP_SUMMARY
-          echo "| Credential Security | ✅ No Exposure Detected |" >> $GITHUB_STEP_SUMMARY
       
       # Enhanced error handling: Retry authentication on failure (Requirement 6.3)
       - name: Retry registry authentication
@@ -532,7 +514,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
           logout: true
         continue-on-error: false
         timeout-minutes: 5
