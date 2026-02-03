@@ -109,6 +109,23 @@ release:
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"
+  footer: |
+    ## Docker Images
+
+    Multi-platform Docker images are available on GitHub Container Registry:
+
+    ```bash
+    # Pull the latest version
+    docker pull ghcr.io/nesnilnehc/powa-sentinel:{{ .Tag }}
+    docker pull ghcr.io/nesnilnehc/powa-sentinel:latest
+
+    # Run with your config
+    docker run -d -v $(pwd)/config.yaml:/config.yaml ghcr.io/nesnilnehc/powa-sentinel:{{ .Tag }}
+    ```
+
+    **Supported platforms:** linux/amd64, linux/arm64
+
+    **Registry:** [ghcr.io/nesnilnehc/powa-sentinel](https://github.com/nesnilnehc/powa-sentinel/pkgs/container/powa-sentinel)
 
 announce:
   skip: true
