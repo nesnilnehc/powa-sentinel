@@ -1,6 +1,7 @@
 module github.com/powa-team/powa-sentinel
 
 go 1.25
+toolchain go1.25.7
 
 require (
 	github.com/lib/pq v1.10.9
