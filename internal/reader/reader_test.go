@@ -291,3 +291,49 @@ func TestReader_GetMetrics_PoWA4(t *testing.T) {
 		t.Errorf("there were unfulfilled expectations: %s", err)
 	}
 }
+
+// TestReader_GetMetrics_DeltaSemantics asserts that getMetrics returns delta values (last − first in the window),
+// not SUM. The query computes first/last per (queryid, ...) and returns calls = last_calls − first_calls,
+// total_time = last_time − first_time. This test mocks one row with delta-shaped values and asserts them.
+func TestReader_GetMetrics_DeltaSemantics(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("unexpected error creating mock: %s", err)
+	}
+	defer db.Close()
+
+	r := &Reader{
+		db:          db,
+		cfg:         &config.DatabaseConfig{},
+		hasKCache:   false, // no kcache so we only assert metrics query
+		powaVersion: "3.2.0",
+	}
+
+	now := time.Now()
+	// Simulate first_calls=100, last_calls=150 → calls=50; first_time=1000, last_time=1050 → total_time=50
+	mock.ExpectQuery("SELECT.*powa_statements_history").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{"queryid", "query", "datname", "server_name", "srvid", "total_time", "mean_time", "calls", "ts"}).
+			AddRow(1001, "SELECT 1", "postgres", "local", 0, 50.0, 1.0, 50, now))
+
+	metrics, err := r.getMetrics(context.Background(), now.Add(-1*time.Hour), now)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(metrics) != 1 {
+		t.Fatalf("expected 1 metric, got %d", len(metrics))
+	}
+	m := metrics[0]
+	if m.Calls != 50 {
+		t.Errorf("expected calls (delta) = 50, got %d", m.Calls)
+	}
+	if m.TotalTime != 50.0 {
+		t.Errorf("expected total_time (delta) = 50.0, got %f", m.TotalTime)
+	}
+	if m.MeanTime != 1.0 {
+		t.Errorf("expected mean_time = 1.0, got %f", m.MeanTime)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %s", err)
+	}
+}

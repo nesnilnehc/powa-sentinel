@@ -67,12 +67,14 @@ flowchart LR
 
 Historical aggregated stats for trends and regression.
 
+**Cumulative counters**: History rows store **cumulative** values from `pg_stat_statements` (and similarly for kcache history). To get “calls” or “total time” **in a time period**, consumers must compute the **delta** (value at end of window minus value at start of window), not sum the rows. Resetting stats (e.g. `pg_stat_statements_reset()`) during a window can make that period’s delta unreliable.
+
 | Field | Type | Usage |
 | ----- | ---- | ----- |
 | `queryid` | bigint | Join with powa_statements |
 | `ts` / `coalesce_range` | timestamp/tstzrange | Time-series filtering |
-| `calls` | bigint | Volume analysis |
-| `total_time` | double | Performance analysis |
+| `calls` | bigint | Volume analysis (use delta for period) |
+| `total_time` | double | Performance analysis (use delta for period) |
 | `mean_time` | double | Regression calculation (baseline) |
 
 ### powa_databases

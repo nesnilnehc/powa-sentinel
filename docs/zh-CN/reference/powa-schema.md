@@ -67,12 +67,14 @@ flowchart LR
 
 历史聚合统计，用于趋势与回归分析。
 
+**累积计数器**：历史表中每行存的是 `pg_stat_statements` 的**累积值**（kcache 历史表同理）。要得到**某时间段内**的「调用次数」或「总耗时」，必须用该时间段内的**增量**（窗口结束时的值减开始时的值），而不能对多行做 SUM。若在窗口内执行过统计重置（如 `pg_stat_statements_reset()`），该段时间的增量可能不可靠。
+
 | 字段 | 类型 | 用途 |
 | ---- | ---- | ---- |
 | `queryid` | bigint | 与 powa_statements 关联 |
 | `ts` / `coalesce_range` | timestamp/tstzrange | 时间序列过滤 |
-| `calls` | bigint | 调用量分析 |
-| `total_time` | double | 性能分析 |
+| `calls` | bigint | 调用量分析（按时间段请用增量） |
+| `total_time` | double | 性能分析（按时间段请用增量） |
 | `mean_time` | double | 回归计算（基线） |
 
 ### powa_databases

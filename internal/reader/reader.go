@@ -217,57 +217,90 @@ func (r *Reader) GetBaselineMetrics(ctx context.Context, offset, window time.Dur
 }
 
 // getMetrics fetches metrics for a specific time range.
+//
+// PoWA history tables store cumulative counters (calls, total_exec_time, etc.). For a time window,
+// we must compute the delta (last − first) per (queryid, …), not SUM of rows. getMetrics and
+// enrichWithKCache both use this first/last aggregation pattern; see powa-schema.md for schema notes.
 func (r *Reader) getMetrics(ctx context.Context, startTime, endTime time.Time) ([]model.MetricSnapshot, error) {
 	// Use LIMIT to prevent unbounded result sets
 	var query string
 
 	if r.isPoWA4() {
-		// PoWA 4 uses a nested "records" array and queryid/dbid/srvid structure
-		// We unnest the records to get the individual metrics
-		// Note: PoWA 4 records typically use standardized field names like total_exec_time
-		// We also join with powa_servers to get the server alias/name
+		// PoWA 4 uses a nested "records" array; each record holds cumulative stats at that ts.
+		// We must use delta (last - first) in the window, not SUM, to get calls/total_time for the period.
 		query = fmt.Sprintf(`
-			SELECT 
-				ps.queryid,
+			WITH u AS (
+				SELECT ps.queryid, ps.srvid, ps.dbid, ps.userid,
+					(r).ts AS ts,
+					(r).calls AS calls,
+					(r).total_exec_time AS total_exec_time
+				FROM powa_statements_history ps
+				CROSS JOIN LATERAL unnest(ps.records) AS r
+				WHERE ps.coalesce_range && tstzrange($1::timestamptz, $2::timestamptz, '[]')
+					AND (r).ts >= $1 AND (r).ts <= $2
+			),
+			first_last AS (
+				SELECT
+					queryid, srvid, dbid, userid,
+					(array_agg(calls ORDER BY ts))[1] AS first_calls,
+					(array_agg(total_exec_time ORDER BY ts))[1] AS first_time,
+					(array_agg(calls ORDER BY ts DESC))[1] AS last_calls,
+					(array_agg(total_exec_time ORDER BY ts DESC))[1] AS last_time,
+					MAX(ts) AS ts
+				FROM u
+				GROUP BY queryid, srvid, dbid, userid
+			)
+			SELECT
+				fl.queryid,
 				s.query,
 				pd.datname,
-				COALESCE(srv.alias, srv.hostname || ':' || CAST(srv.port AS TEXT)) as server_name,
-				ps.srvid,
-				COALESCE(SUM((r).total_exec_time), 0) as total_time,
-				COALESCE(SUM((r).total_exec_time) / NULLIF(SUM((r).calls), 0), 0) as mean_time,
-				COALESCE(SUM((r).calls), 0) as calls,
-				MAX((r).ts) as ts
-			FROM powa_statements_history ps
-			CROSS JOIN LATERAL unnest(ps.records) as r
-			JOIN powa_databases pd ON ps.srvid = pd.srvid AND ps.dbid = pd.oid
-			JOIN powa_statements s ON ps.srvid = s.srvid AND ps.queryid = s.queryid AND ps.dbid = s.dbid AND ps.userid = s.userid
-			JOIN powa_servers srv ON ps.srvid = srv.id
-			WHERE ps.coalesce_range && tstzrange($1::timestamptz, $2::timestamptz, '[]')
-			AND (r).ts >= $1 AND (r).ts <= $2
-			GROUP BY ps.queryid, s.query, pd.datname, server_name, ps.srvid
+				COALESCE(srv.alias, srv.hostname || ':' || CAST(srv.port AS TEXT)) AS server_name,
+				fl.srvid,
+				COALESCE(GREATEST(fl.last_time - fl.first_time, 0), 0) AS total_time,
+				CASE WHEN (fl.last_calls - fl.first_calls) > 0
+					THEN (fl.last_time - fl.first_time) / NULLIF(fl.last_calls - fl.first_calls, 0)
+					ELSE 0 END AS mean_time,
+				COALESCE(GREATEST(fl.last_calls - fl.first_calls, 0), 0)::bigint AS calls,
+				fl.ts
+			FROM first_last fl
+			JOIN powa_databases pd ON fl.srvid = pd.srvid AND fl.dbid = pd.oid
+			JOIN powa_statements s ON fl.srvid = s.srvid AND fl.queryid = s.queryid AND fl.dbid = s.dbid AND fl.userid = s.userid
+			JOIN powa_servers srv ON fl.srvid = srv.id
 			ORDER BY total_time DESC
 			LIMIT %d
 		`, MaxQueryRows)
 	} else {
-		// PoWA 3 uses flat columns
-		// Dynamically select the correct column name based on PostgreSQL version
+		// PoWA 3 uses flat columns; each row is a cumulative snapshot at ps.ts.
+		// Use delta (last - first) in the window, not SUM, to get calls/total_time for the period.
 		execTimeCol := r.getExecTimeColumn()
 		query = fmt.Sprintf(`
-			SELECT 
-				ps.queryid,
+			WITH first_last AS (
+				SELECT
+					ps.queryid, ps.dbid, ps.userid,
+					(array_agg(ps.calls ORDER BY ps.ts))[1] AS first_calls,
+					(array_agg(ps.%s ORDER BY ps.ts))[1] AS first_time,
+					(array_agg(ps.calls ORDER BY ps.ts DESC))[1] AS last_calls,
+					(array_agg(ps.%s ORDER BY ps.ts DESC))[1] AS last_time,
+					MAX(ps.ts) AS ts
+				FROM powa_statements_history ps
+				WHERE ps.ts >= $1 AND ps.ts <= $2
+				GROUP BY ps.queryid, ps.dbid, ps.userid
+			)
+			SELECT
+				fl.queryid,
 				s.query,
 				pd.datname,
-				'local' as server_name,
-				0 as srvid,
-				COALESCE(SUM(ps.%s), 0) as total_time,
-				COALESCE(SUM(ps.%s) / NULLIF(SUM(ps.calls), 0), 0) as mean_time,
-				COALESCE(SUM(ps.calls), 0) as calls,
-				MAX(ps.ts) as ts
-			FROM powa_statements_history ps
-			JOIN powa_databases pd ON ps.dbid = pd.oid
-			JOIN powa_statements s ON ps.queryid = s.queryid AND ps.dbid = s.dbid AND ps.userid = s.userid
-			WHERE ps.ts >= $1 AND ps.ts <= $2
-			GROUP BY ps.queryid, s.query, pd.datname
+				'local' AS server_name,
+				0 AS srvid,
+				COALESCE(GREATEST(fl.last_time - fl.first_time, 0), 0) AS total_time,
+				CASE WHEN (fl.last_calls - fl.first_calls) > 0
+					THEN (fl.last_time - fl.first_time) / NULLIF(fl.last_calls - fl.first_calls, 0)
+					ELSE 0 END AS mean_time,
+				COALESCE(GREATEST(fl.last_calls - fl.first_calls, 0), 0)::bigint AS calls,
+				fl.ts
+			FROM first_last fl
+			JOIN powa_databases pd ON fl.dbid = pd.oid
+			JOIN powa_statements s ON fl.queryid = s.queryid AND fl.dbid = s.dbid AND fl.userid = s.userid
 			ORDER BY total_time DESC
 			LIMIT %d
 		`, execTimeCol, execTimeCol, MaxQueryRows)
@@ -314,37 +347,73 @@ func (r *Reader) getMetrics(ctx context.Context, startTime, endTime time.Time) (
 }
 
 // enrichWithKCache adds pg_stat_kcache metrics to the snapshots.
+// Kcache history stores cumulative counters; we use delta (last - first) in the window, not SUM.
 func (r *Reader) enrichWithKCache(ctx context.Context, snapshots []model.MetricSnapshot, startTime, endTime time.Time) error {
 	var query string
 	if r.isPoWA4() {
-		// PoWA 4 schema - using discovered table
+		// PoWA 4: first/last delta per (queryid, srvid)
 		query = fmt.Sprintf(`
-			SELECT 
-				k.queryid,
-				k.srvid,
-				COALESCE(SUM((r).exec_reads), 0) as reads_blks,
-				COALESCE(SUM((r).exec_writes), 0) as writes_blks,
-				COALESCE(SUM((r).exec_user_time), 0) as user_cpu_time,
-				COALESCE(SUM((r).exec_system_time), 0) as system_cpu_time
-			FROM %s k
-			CROSS JOIN LATERAL unnest(k.records) as r
-			WHERE k.coalesce_range && tstzrange($1::timestamptz, $2::timestamptz, '[]')
-			AND (r).ts >= $1 AND (r).ts <= $2
-			GROUP BY k.queryid, k.srvid
+			WITH u AS (
+				SELECT k.queryid, k.srvid,
+					(r).ts AS ts,
+					(r).exec_reads AS exec_reads,
+					(r).exec_writes AS exec_writes,
+					(r).exec_user_time AS exec_user_time,
+					(r).exec_system_time AS exec_system_time
+				FROM %s k
+				CROSS JOIN LATERAL unnest(k.records) AS r
+				WHERE k.coalesce_range && tstzrange($1::timestamptz, $2::timestamptz, '[]')
+					AND (r).ts >= $1 AND (r).ts <= $2
+			),
+			first_last AS (
+				SELECT
+					queryid, srvid,
+					(array_agg(exec_reads ORDER BY ts))[1] AS first_reads,
+					(array_agg(exec_writes ORDER BY ts))[1] AS first_writes,
+					(array_agg(exec_user_time ORDER BY ts))[1] AS first_user_time,
+					(array_agg(exec_system_time ORDER BY ts))[1] AS first_system_time,
+					(array_agg(exec_reads ORDER BY ts DESC))[1] AS last_reads,
+					(array_agg(exec_writes ORDER BY ts DESC))[1] AS last_writes,
+					(array_agg(exec_user_time ORDER BY ts DESC))[1] AS last_user_time,
+					(array_agg(exec_system_time ORDER BY ts DESC))[1] AS last_system_time
+				FROM u
+				GROUP BY queryid, srvid
+			)
+			SELECT
+				queryid,
+				srvid,
+				COALESCE(GREATEST(last_reads - first_reads, 0), 0)::bigint AS reads_blks,
+				COALESCE(GREATEST(last_writes - first_writes, 0), 0)::bigint AS writes_blks,
+				COALESCE(GREATEST(last_user_time - first_user_time, 0), 0) AS user_cpu_time,
+				COALESCE(GREATEST(last_system_time - first_system_time, 0), 0) AS system_cpu_time
+			FROM first_last
 		`, r.kcacheTable)
 	} else {
-		// PoWA 3 schema (legacy)
+		// PoWA 3: first/last delta per queryid
 		query = fmt.Sprintf(`
-			SELECT 
+			WITH first_last AS (
+				SELECT
+					queryid,
+					(array_agg(reads ORDER BY ts))[1] AS first_reads,
+					(array_agg(writes ORDER BY ts))[1] AS first_writes,
+					(array_agg(user_time ORDER BY ts))[1] AS first_user_time,
+					(array_agg(system_time ORDER BY ts))[1] AS first_system_time,
+					(array_agg(reads ORDER BY ts DESC))[1] AS last_reads,
+					(array_agg(writes ORDER BY ts DESC))[1] AS last_writes,
+					(array_agg(user_time ORDER BY ts DESC))[1] AS last_user_time,
+					(array_agg(system_time ORDER BY ts DESC))[1] AS last_system_time
+				FROM %s
+				WHERE ts >= $1 AND ts <= $2
+				GROUP BY queryid
+			)
+			SELECT
 				queryid,
-				0 as srvid,
-				COALESCE(SUM(reads), 0) as reads_blks,
-				COALESCE(SUM(writes), 0) as writes_blks,
-				COALESCE(SUM(user_time), 0) as user_cpu_time,
-				COALESCE(SUM(system_time), 0) as system_cpu_time
-			FROM %s
-			WHERE ts >= $1 AND ts <= $2
-			GROUP BY queryid
+				0 AS srvid,
+				COALESCE(GREATEST(last_reads - first_reads, 0), 0)::bigint AS reads_blks,
+				COALESCE(GREATEST(last_writes - first_writes, 0), 0)::bigint AS writes_blks,
+				COALESCE(GREATEST(last_user_time - first_user_time, 0), 0) AS user_cpu_time,
+				COALESCE(GREATEST(last_system_time - first_system_time, 0), 0) AS system_cpu_time
+			FROM first_last
 		`, r.kcacheTable)
 	}
 
